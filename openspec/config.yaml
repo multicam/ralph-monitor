@@ -1,0 +1,20 @@
+schema: spec-driven
+
+context: |
+  Project: ralph-monitor
+  Purpose: Web dashboard for monitoring one or more ralph AI agent loops running on Proxmox VMs
+  Inspiration: ghuntley/loom (Rust/Svelte multi-agent monitoring system)
+  Tech stack: TypeScript, Svelte 5 (frontend), Node.js (backend), SSH/SFTP (VM access)
+  Infrastructure: Proxmox VMs on local network, SSH/SFTP access to each machine
+  Domain: AI agent monitoring — visual feedback of running processes and human-readable work in progress
+  Conventions: CLI-first, TypeScript over Python, bun as package manager
+
+rules:
+  proposal:
+    - Keep proposals under 500 words
+    - Always include a "Non-goals" section
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - Use checkbox format for implementation steps
+  specs:
+    - Use WHEN/THEN/AND scenario format for requirements
