@@ -20,7 +20,7 @@ for (const vm of config.vms) {
 
 const port = config.server?.port ?? 3000;
 
-const server = createServer((req, res) => {
+const server = createServer(async (req, res) => {
   const cors = { "Access-Control-Allow-Origin": "*" };
 
   if (req.url === "/api/status") {
@@ -44,13 +44,9 @@ const server = createServer((req, res) => {
   const deleteMatch = req.url?.match(/^\/api\/loops\/([^/]+)$/);
   if (deleteMatch && req.method === "DELETE") {
     const loopId = decodeURIComponent(deleteMatch[1]!);
-    pipeline.removeLoop(loopId).then((found) => {
-      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json", ...cors });
-      res.end(JSON.stringify({ ok: found, loopId }));
-    }).catch((err) => {
-      res.writeHead(500, { "Content-Type": "application/json", ...cors });
-      res.end(JSON.stringify({ ok: false, error: String(err) }));
-    });
+    const found = await pipeline.removeLoop(loopId);
+    res.writeHead(found ? 200 : 404, { "Content-Type": "application/json", ...cors });
+    res.end(JSON.stringify({ ok: found, loopId }));
     return;
   }
 

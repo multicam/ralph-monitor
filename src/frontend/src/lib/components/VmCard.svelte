@@ -18,12 +18,14 @@
 
   const healthColor = $derived(
     loop.health === "running" ? "#4ade80" :
+    loop.health === "completed" ? "#818cf8" :
     loop.health === "errored" ? "#f87171" :
     loop.health === "stale" ? "#fbbf24" : "#64748b"
   );
 
   const healthIcon = $derived(
     loop.health === "running" ? "\u25CF" :
+    loop.health === "completed" ? "\u2713" :
     loop.health === "errored" ? "\u2715" :
     loop.health === "stale" ? "\u25CB" : "\u25CB"
   );
@@ -33,24 +35,18 @@
     return parts.replace(".jsonl", "");
   });
 
+  function fmtTime(ts: number): string {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+
   const timeLabel = $derived.by(() => {
-    if (loop.health === "running" && loop.startedAt) {
-      const ms = now - loop.startedAt;
-      const mins = Math.floor(ms / 60_000);
-      if (mins < 60) return `${mins}m`;
-      const hrs = Math.floor(mins / 60);
-      return `${hrs}h ${mins % 60}m`;
+    if (!loop.startedAt) return "";
+    const start = fmtTime(loop.startedAt);
+    if (loop.finishedAt) {
+      return `${start} \u2013 ${fmtTime(loop.finishedAt)}`;
     }
-    if (loop.lastActivity) {
-      const ms = now - loop.lastActivity;
-      const mins = Math.floor(ms / 60_000);
-      if (mins < 1) return "just now";
-      if (mins < 60) return `${mins}m ago`;
-      const hrs = Math.floor(mins / 60);
-      if (hrs < 24) return `${hrs}h ago`;
-      return `${Math.floor(hrs / 24)}d ago`;
-    }
-    return "";
+    return start;
   });
 
   function toggle() {
@@ -67,7 +63,7 @@
   }
 </script>
 
-<div class="card" class:expanded class:errored={loop.health === "errored"}>
+<div class="card" class:expanded class:running={loop.health === "running"} class:completed={loop.health === "completed"} class:errored={loop.health === "errored"} class:stale={loop.health === "stale"}>
   <div class="card-header" role="button" tabindex="0" onclick={toggle} onkeydown={(e) => e.key === 'Enter' || e.key === ' ' ? toggle() : null}>
     <span class="health-dot" class:pulsing={isRunning} style="color: {healthColor}">
       {healthIcon}
@@ -98,6 +94,8 @@
     <div class="card-body">
       {#if events.length > 0}
         <EventFeed {events} />
+      {:else if loop.loopId in monitor.events}
+        <div class="loading">No events</div>
       {:else}
         <div class="loading">Loading events...</div>
       {/if}
@@ -114,8 +112,22 @@
     flex-shrink: 0;
   }
 
+  .card.running {
+    border-color: #4ade8033;
+  }
+
+  .card.completed {
+    border-color: #818cf833;
+    opacity: 0.7;
+  }
+
   .card.errored {
     border-color: #f8717133;
+  }
+
+  .card.stale {
+    border-color: #fbbf2433;
+    opacity: 0.5;
   }
 
   .card.expanded {

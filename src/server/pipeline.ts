@@ -13,11 +13,22 @@ import type {
 import { makeLoopId, sanitizeVmConfig } from "../lib/types.ts";
 
 const BUFFER_SIZE = 500;
+
+/** Extract timestamp from session filename like build-20260218-072927-iter2.jsonl */
+function parseSessionTimestamp(sessionFile: string): number {
+  const basename = sessionFile.split("/").pop() ?? "";
+  const m = basename.match(/(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (!m) return Date.now();
+  const [, y, mo, d, h, min, s] = m;
+  return new Date(`${y}-${mo}-${d}T${h}:${min}:${s}`).getTime();
+}
 const STALE_TIMEOUT_MS = 5 * 60_000;
 const LOOP_HEADER_MODE = /^Mode:\s+(\w+)/;
 const LOOP_HEADER_BRANCH = /^Branch:\s+(.+)/;
 const COMPLETED_PATTERN = /^Reached max iterations:/;
-const ERROR_PATTERNS = [/overloaded/i, /rate_limit/i, /internal_error/i];
+const COMPLETED_STOP_REASONS = new Set(["end_turn", "stop_sequence"]);
+// Only match structured error fields, not mentions in content text
+const ERROR_PATTERNS = [/"error":\s*\{\s*"type":\s*"overloaded"/, /"error":\s*\{\s*"type":\s*"rate_limit"/, /"error":\s*\{\s*"type":\s*"internal_error"/];
 
 export class Pipeline extends EventEmitter {
   private managers: (SshManager | LocalWatcher)[] = [];
@@ -102,16 +113,18 @@ export class Pipeline extends EventEmitter {
     const state = this.loopStates.get(loopId);
     if (!state) return false;
 
-    const manager = this.managersByVm.get(state.vmName);
-    if (manager) {
-      await manager.deleteFile(state.sessionFile);
-    }
-
+    // Remove from state immediately so the UI updates instantly
     this.loopStates.delete(loopId);
     this.buffers.delete(loopId);
     this.pairers.delete(loopId);
-
     this.emit("loop_removed", loopId);
+
+    // Delete remote file in background
+    const manager = this.managersByVm.get(state.vmName);
+    if (manager) {
+      manager.deleteFile(state.sessionFile).catch(() => {});
+    }
+
     return true;
   }
 
@@ -132,7 +145,8 @@ export class Pipeline extends EventEmitter {
       mode: null,
       branch: null,
       model: null,
-      startedAt: Date.now(),
+      startedAt: parseSessionTimestamp(sessionFile),
+      finishedAt: null,
       lastActivity: Date.now(),
     };
 
@@ -235,28 +249,58 @@ export class Pipeline extends EventEmitter {
 
   private detectHealth(loopId: string, line: string, parsed: RawJsonlMessage | null): void {
     const state = this.loopStates.get(loopId);
-    if (!state || state.health === "completed" || state.health === "errored") return;
+    if (!state) return;
+
+    // Claude Code result summary is authoritative — overrides any prior state
+    if (parsed && (parsed as Record<string, unknown>).type === "result") {
+      const result = parsed as Record<string, unknown>;
+      const health = result.is_error ? "errored" : "completed";
+      const durationMs = typeof result.duration_ms === "number" ? result.duration_ms : null;
+      state.health = health;
+      state.finishedAt = durationMs && state.startedAt
+        ? state.startedAt + durationMs
+        : Date.now();
+      this.emit("loop_status", loopId, state);
+      return;
+    }
+
+    // Don't override terminal states
+    if (state.health === "completed" || state.health === "errored") return;
 
     // Check for completion signal from loop.sh
     if (COMPLETED_PATTERN.test(line)) {
-      state.health = "completed";
-      this.emit("loop_status", loopId, state);
+      this.setTerminalHealth(state, loopId, "completed");
+      return;
+    }
+
+    // Assistant message with end_turn and no tool_use = session completed
+    if (parsed?.message?.stop_reason && COMPLETED_STOP_REASONS.has(parsed.message.stop_reason)) {
+      const contents = parsed.message.content ?? [];
+      const hasToolUse = contents.some((c: { type: string }) => c.type === "tool_use");
+      if (!hasToolUse) {
+        this.setTerminalHealth(state, loopId, "completed");
+        return;
+      }
+    }
+
+    if (parsed?.message?.stop_reason === "error") {
+      this.setTerminalHealth(state, loopId, "errored");
       return;
     }
 
     // Check for model/API errors in raw lines
     for (const pattern of ERROR_PATTERNS) {
       if (pattern.test(line)) {
-        state.health = "errored";
-        this.emit("loop_status", loopId, state);
+        this.setTerminalHealth(state, loopId, "errored");
         return;
       }
     }
+  }
 
-    if (parsed?.message?.stop_reason === "error") {
-      state.health = "errored";
-      this.emit("loop_status", loopId, state);
-    }
+  private setTerminalHealth(state: LoopState, loopId: string, health: LoopHealth): void {
+    state.health = health;
+    state.finishedAt = state.lastActivity ?? Date.now();
+    this.emit("loop_status", loopId, state);
   }
 
   private checkStaleLoops(): void {
@@ -264,7 +308,13 @@ export class Pipeline extends EventEmitter {
     for (const [loopId, state] of this.loopStates) {
       if (state.health !== "running") continue;
       if (state.lastActivity && now - state.lastActivity > STALE_TIMEOUT_MS) {
-        state.health = "stale";
+        // Check if the last buffered event suggests completion
+        const buf = this.buffers.get(loopId);
+        const last = buf?.[buf.length - 1];
+        const looksCompleted = last?.type === "assistant" ||
+          (last?.type === "tool_paired" && last.resultSummary);
+        state.health = looksCompleted ? "completed" : "stale";
+        state.finishedAt = state.lastActivity;
         this.emit("loop_status", loopId, state);
       }
     }

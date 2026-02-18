@@ -8,10 +8,10 @@ class MonitorStore {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Loops sorted by last activity (most recent first) */
+  /** Loops sorted by start time (newest first) */
   get sortedLoops(): LoopState[] {
     return Object.values(this.loops).sort((a, b) => {
-      return (b.lastActivity ?? 0) - (a.lastActivity ?? 0);
+      return (b.startedAt ?? 0) - (a.startedAt ?? 0);
     });
   }
 

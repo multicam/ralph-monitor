@@ -182,7 +182,7 @@ export class SshManager extends EventEmitter {
       // Print file list for discovery
       `for f in $files; do echo "FILE:$f"; done`,
       // Tail all files, prefix each line with filename
-      `for f in $files; do tail -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f	$line"; done & done`,
+      `for f in $files; do tail -n 50 -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f	$line"; done & done`,
       `wait`,
     ].join("; ");
 
