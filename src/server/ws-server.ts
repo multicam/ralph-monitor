@@ -9,7 +9,7 @@ export class WsRelay {
 
   constructor(server: Server, pipeline: Pipeline) {
     this.pipeline = pipeline;
-    this.wss = new WebSocketServer({ server });
+    this.wss = new WebSocketServer({ server, path: "/ws" });
 
     this.wss.on("connection", (ws) => {
       this.sendSnapshot(ws);

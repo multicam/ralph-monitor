@@ -77,6 +77,8 @@ export interface VmConfig {
   user: string;
   key?: string;
   password?: string;
+  local?: boolean;
+  watchDir?: string;
 }
 
 /** Derives a loopId from vm name and session file basename */

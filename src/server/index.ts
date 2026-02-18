@@ -12,8 +12,8 @@ const config = parseYaml(configRaw) as AppConfig;
 
 // Validate VM auth config
 for (const vm of config.vms) {
-  if (!vm.key && !vm.password) {
-    console.error(`VM "${vm.name}": must have either "key" or "password" configured`);
+  if (!vm.local && !vm.key && !vm.password) {
+    console.error(`VM "${vm.name}": must have either "key", "password", or "local: true" configured`);
     process.exit(1);
   }
 }

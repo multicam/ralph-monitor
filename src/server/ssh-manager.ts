@@ -62,13 +62,19 @@ export class SshManager extends EventEmitter {
     return resolve(keyPath);
   }
 
+  private reconnecting = false;
+
   private connect(): void {
     if (this.stopped) return;
+    this.reconnecting = false;
 
     const conn = new Client();
     this.conn = conn;
 
+    console.log(`[${this.vmId}] Connecting to ${this.config.host}...`);
+
     conn.on("ready", () => {
+      console.log(`[${this.vmId}] SSH connected`);
       this.reconnectDelay = 1000;
       this.emit("vm_connection", this.vmId, "connected");
       this.discoverFiles();
@@ -77,6 +83,7 @@ export class SshManager extends EventEmitter {
     });
 
     conn.on("error", (err: Error) => {
+      console.error(`[${this.vmId}] SSH error: ${err.message}`);
       this.emit("error", this.vmId, err);
       this.scheduleReconnect();
     });
@@ -89,19 +96,29 @@ export class SshManager extends EventEmitter {
       }
     });
 
+    conn.on("keyboard-interactive", (_name, _instructions, _instructionsLang, _prompts, finish) => {
+      console.log(`[${this.vmId}] keyboard-interactive auth requested`);
+      finish([this.config.password ?? ""]);
+    });
+
+    const baseOpts = {
+      host: this.config.host,
+      port: 22,
+      username: this.config.user,
+      readyTimeout: 30_000,
+      keepaliveInterval: 10_000,
+      keepaliveCountMax: 3,
+    };
+
     try {
       if (this.config.key) {
         const privateKey = readFileSync(this.resolveKeyPath(this.config.key));
-        conn.connect({
-          host: this.config.host,
-          username: this.config.user,
-          privateKey,
-        });
+        conn.connect({ ...baseOpts, privateKey });
       } else if (this.config.password) {
         conn.connect({
-          host: this.config.host,
-          username: this.config.user,
+          ...baseOpts,
           password: this.config.password,
+          tryKeyboard: true,
         });
       }
     } catch (err) {
@@ -111,16 +128,18 @@ export class SshManager extends EventEmitter {
   }
 
   private scheduleReconnect(): void {
-    if (this.stopped) return;
+    if (this.stopped || this.reconnecting) return;
+    this.reconnecting = true;
     const delay = this.reconnectDelay;
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectDelay);
+    console.log(`[${this.vmId}] Reconnecting in ${delay / 1000}s...`);
     setTimeout(() => this.connect(), delay);
   }
 
   private discoverFiles(): void {
     if (!this.conn || this.stopped) return;
 
-    this.conn.exec("ls -1 /tmp/ralph/*.jsonl 2>/dev/null", (err, stream) => {
+    this.conn.exec("find /tmp/ralph -name '*.jsonl' 2>/dev/null", (err, stream) => {
       if (err) {
         this.emit("vm_connection", this.vmId, "idle");
         return;

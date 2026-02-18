@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { SshManager } from "./ssh-manager.ts";
+import { LocalWatcher } from "./local-watcher.ts";
 import { parseLine, EventPairer } from "../lib/parser.ts";
 import type {
   AppConfig,
@@ -14,7 +15,7 @@ const LOOP_HEADER_MODE = /^Mode:\s+(\w+)/;
 const LOOP_HEADER_BRANCH = /^Branch:\s+(.+)/;
 
 export class Pipeline extends EventEmitter {
-  private managers: SshManager[] = [];
+  private managers: (SshManager | LocalWatcher)[] = [];
   private pairers = new Map<string, EventPairer>();
   private buffers = new Map<string, MonitorEvent[]>();
   private loopStates = new Map<string, LoopState>();
@@ -25,7 +26,9 @@ export class Pipeline extends EventEmitter {
 
   start(): void {
     for (const vm of this.config.vms) {
-      const manager = new SshManager(vm);
+      const manager = vm.local
+        ? new LocalWatcher(vm.name, vm.watchDir)
+        : new SshManager(vm);
       this.managers.push(manager);
 
       manager.on("line", (vmId: string, sessionFile: string, line: string) => {
