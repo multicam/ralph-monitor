@@ -40,13 +40,22 @@
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
+  function fmtDuration(ms: number): string {
+    const mins = Math.floor(ms / 60_000);
+    if (mins < 60) return `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    return `${hrs}h${mins % 60}m`;
+  }
+
   const timeLabel = $derived.by(() => {
     if (!loop.startedAt) return "";
     const start = fmtTime(loop.startedAt);
     if (loop.finishedAt) {
-      return `${start} \u2013 ${fmtTime(loop.finishedAt)}`;
+      const dur = fmtDuration(loop.finishedAt - loop.startedAt);
+      return `${start} \u2013 ${fmtTime(loop.finishedAt)} (${dur})`;
     }
-    return start;
+    const dur = fmtDuration(now - loop.startedAt);
+    return `${start} (${dur})`;
   });
 
   function toggle() {
