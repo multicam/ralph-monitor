@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, appendFileSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, appendFileSync, existsSync } from "fs";
 import { join } from "path";
 import { Pipeline } from "./pipeline.ts";
 import type { AppConfig, LoopState, MonitorEvent } from "../lib/types.ts";
@@ -352,5 +352,47 @@ describe("Pipeline", () => {
     expect(events.length).toBeLessThanOrEqual(3);
 
     pipeline.stop();
+  });
+
+  test("removeLoop deletes file, cleans state, and emits loop_removed", async () => {
+    const filePath = join(TEST_DIR, "to-delete.jsonl");
+    writeFileSync(filePath, "");
+
+    const pipeline = new Pipeline(makeConfig(TEST_DIR));
+    const removed: string[] = [];
+
+    pipeline.on("loop_removed", (loopId: string) => {
+      removed.push(loopId);
+    });
+
+    pipeline.start();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Append a line to create the loop
+    appendFileSync(filePath, JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "hello" }] },
+    }) + "\n");
+
+    await new Promise((r) => setTimeout(r, 700));
+
+    const loopId = "test-vm:to-delete.jsonl";
+    expect(pipeline.getLoopStates().has(loopId)).toBe(true);
+
+    // Remove the loop
+    const result = await pipeline.removeLoop(loopId);
+    expect(result).toBe(true);
+    expect(pipeline.getLoopStates().has(loopId)).toBe(false);
+    expect(pipeline.getRecentEvents(loopId)).toEqual([]);
+    expect(removed).toContain(loopId);
+    expect(existsSync(filePath)).toBe(false);
+
+    pipeline.stop();
+  });
+
+  test("removeLoop returns false for unknown loopId", async () => {
+    const pipeline = new Pipeline(makeConfig(TEST_DIR));
+    const result = await pipeline.removeLoop("nonexistent");
+    expect(result).toBe(false);
   });
 });

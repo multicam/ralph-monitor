@@ -7,15 +7,21 @@ import type {
   MonitorEvent,
   LoopState,
   LoopConnectionStatus,
+  LoopHealth,
+  RawJsonlMessage,
 } from "../lib/types.ts";
-import { makeLoopId } from "../lib/types.ts";
+import { makeLoopId, sanitizeVmConfig } from "../lib/types.ts";
 
 const BUFFER_SIZE = 500;
+const STALE_TIMEOUT_MS = 5 * 60_000;
 const LOOP_HEADER_MODE = /^Mode:\s+(\w+)/;
 const LOOP_HEADER_BRANCH = /^Branch:\s+(.+)/;
+const COMPLETED_PATTERN = /^Reached max iterations:/;
+const ERROR_PATTERNS = [/overloaded/i, /rate_limit/i, /internal_error/i];
 
 export class Pipeline extends EventEmitter {
   private managers: (SshManager | LocalWatcher)[] = [];
+  private managersByVm = new Map<string, SshManager | LocalWatcher>();
   private pairers = new Map<string, EventPairer>();
   private buffers = new Map<string, MonitorEvent[]>();
   private loopStates = new Map<string, LoopState>();
@@ -30,6 +36,7 @@ export class Pipeline extends EventEmitter {
         ? new LocalWatcher(vm.name, vm.watchDir)
         : new SshManager(vm);
       this.managers.push(manager);
+      this.managersByVm.set(vm.name, manager);
 
       manager.on("line", (vmId: string, sessionFile: string, line: string) => {
         const loopId = makeLoopId(vmId, sessionFile);
@@ -41,11 +48,11 @@ export class Pipeline extends EventEmitter {
         const loopId = makeLoopId(vmId, sessionFile);
         this.ensureLoop(loopId, vmId, sessionFile);
 
-        const loopStatus: LoopConnectionStatus =
-          status === "inactive" ? "inactive" :
-          status === "new" ? "connected" : "connected";
-
-        this.updateLoopStatus(loopId, loopStatus);
+        const newStatus: LoopConnectionStatus = status === "inactive" ? "inactive" : "connected";
+        const state = this.loopStates.get(loopId);
+        if (state && state.status !== newStatus) {
+          this.updateLoopStatus(loopId, newStatus);
+        }
       });
 
       manager.on("vm_connection", (vmId: string, status: string) => {
@@ -66,11 +73,12 @@ export class Pipeline extends EventEmitter {
       manager.start();
     }
 
-    // Prune stale pending tool calls periodically
+    // Prune stale pending tool calls and check health periodically
     setInterval(() => {
       for (const pairer of this.pairers.values()) {
         pairer.pruneStale();
       }
+      this.checkStaleLoops();
     }, 30_000);
   }
 
@@ -90,6 +98,23 @@ export class Pipeline extends EventEmitter {
     return buffer.slice(-count);
   }
 
+  async removeLoop(loopId: string): Promise<boolean> {
+    const state = this.loopStates.get(loopId);
+    if (!state) return false;
+
+    const manager = this.managersByVm.get(state.vmName);
+    if (manager) {
+      await manager.deleteFile(state.sessionFile);
+    }
+
+    this.loopStates.delete(loopId);
+    this.buffers.delete(loopId);
+    this.pairers.delete(loopId);
+
+    this.emit("loop_removed", loopId);
+    return true;
+  }
+
   private ensureLoop(loopId: string, vmName: string, sessionFile: string): void {
     if (this.loopStates.has(loopId)) return;
 
@@ -99,14 +124,16 @@ export class Pipeline extends EventEmitter {
     const state: LoopState = {
       loopId,
       vmName,
-      vmConfig,
+      vmConfig: sanitizeVmConfig(vmConfig),
       sessionFile,
       status: "connected",
+      health: "running",
       currentIteration: 0,
       mode: null,
       branch: null,
       model: null,
       startedAt: Date.now(),
+      lastActivity: Date.now(),
     };
 
     this.loopStates.set(loopId, state);
@@ -117,41 +144,62 @@ export class Pipeline extends EventEmitter {
   }
 
   private handleLine(loopId: string, line: string): void {
-    this.extractMetadata(loopId, line);
-
-    const event = parseLine(line, loopId);
-    if (!event) return;
-
-    const pairer = this.pairers.get(loopId);
-    const processed = pairer ? pairer.process(event) : event;
-
-    // Update state from events
-    if (processed.type === "iteration") {
-      const state = this.loopStates.get(loopId);
-      if (state) {
-        state.currentIteration = processed.iterationNumber;
+    const state = this.loopStates.get(loopId);
+    if (state) {
+      state.lastActivity = Date.now();
+      // If was stale, revive
+      if (state.health === "stale") {
+        state.health = "running";
         this.emit("loop_status", loopId, state);
       }
     }
 
-    // If it's a paired event, replace the original tool_call in the buffer
-    if (processed.type === "tool_paired") {
-      const buffer = this.buffers.get(loopId);
-      if (buffer) {
-        const idx = buffer.findIndex(
-          (e) => e.type === "tool_call" && e.id === processed.id,
-        );
-        if (idx !== -1) {
-          buffer[idx] = processed;
-        } else {
-          this.pushToBuffer(loopId, processed);
-        }
-      }
-    } else {
-      this.pushToBuffer(loopId, processed);
+    // Parse JSON once, reuse across all handlers
+    let parsed: RawJsonlMessage | null = null;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      // Not JSON — that's fine, plain text lines are common
     }
 
-    this.emit("event", loopId, processed);
+    this.extractMetadata(loopId, line, parsed);
+    this.detectHealth(loopId, line, parsed);
+
+    const events = parseLine(line, loopId, parsed);
+    if (events.length === 0) return;
+
+    const pairer = this.pairers.get(loopId);
+
+    for (const event of events) {
+      const processed = pairer ? pairer.process(event) : event;
+
+      // Update state from events
+      if (processed.type === "iteration") {
+        if (state) {
+          state.currentIteration = processed.iterationNumber;
+          this.emit("loop_status", loopId, state);
+        }
+      }
+
+      // If it's a paired event, replace the original tool_call in the buffer
+      if (processed.type === "tool_paired") {
+        const buffer = this.buffers.get(loopId);
+        if (buffer) {
+          const idx = buffer.findIndex(
+            (e) => e.type === "tool_call" && e.id === processed.id,
+          );
+          if (idx !== -1) {
+            buffer[idx] = processed;
+          } else {
+            this.pushToBuffer(loopId, processed);
+          }
+        }
+      } else {
+        this.pushToBuffer(loopId, processed);
+      }
+
+      this.emit("event", loopId, processed);
+    }
   }
 
   private pushToBuffer(loopId: string, event: MonitorEvent): void {
@@ -163,7 +211,7 @@ export class Pipeline extends EventEmitter {
     }
   }
 
-  private extractMetadata(loopId: string, line: string): void {
+  private extractMetadata(loopId: string, line: string, parsed: RawJsonlMessage | null): void {
     const state = this.loopStates.get(loopId);
     if (!state) return;
 
@@ -179,14 +227,46 @@ export class Pipeline extends EventEmitter {
       this.emit("loop_status", loopId, state);
     }
 
-    try {
-      const parsed = JSON.parse(line);
-      if (parsed.message?.model && parsed.message.model !== state.model) {
-        state.model = parsed.message.model;
+    if (parsed?.message?.model && parsed.message.model !== state.model) {
+      state.model = parsed.message.model;
+      this.emit("loop_status", loopId, state);
+    }
+  }
+
+  private detectHealth(loopId: string, line: string, parsed: RawJsonlMessage | null): void {
+    const state = this.loopStates.get(loopId);
+    if (!state || state.health === "completed" || state.health === "errored") return;
+
+    // Check for completion signal from loop.sh
+    if (COMPLETED_PATTERN.test(line)) {
+      state.health = "completed";
+      this.emit("loop_status", loopId, state);
+      return;
+    }
+
+    // Check for model/API errors in raw lines
+    for (const pattern of ERROR_PATTERNS) {
+      if (pattern.test(line)) {
+        state.health = "errored";
+        this.emit("loop_status", loopId, state);
+        return;
+      }
+    }
+
+    if (parsed?.message?.stop_reason === "error") {
+      state.health = "errored";
+      this.emit("loop_status", loopId, state);
+    }
+  }
+
+  private checkStaleLoops(): void {
+    const now = Date.now();
+    for (const [loopId, state] of this.loopStates) {
+      if (state.health !== "running") continue;
+      if (state.lastActivity && now - state.lastActivity > STALE_TIMEOUT_MS) {
+        state.health = "stale";
         this.emit("loop_status", loopId, state);
       }
-    } catch {
-      // Not JSON
     }
   }
 

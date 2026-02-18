@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { readdirSync, statSync, readFileSync } from "fs";
+import { readdirSync, statSync, openSync, readSync, closeSync, unlinkSync } from "fs";
 import { join } from "path";
 
 const STALE_THRESHOLD_MS = 5 * 60_000;
@@ -11,6 +11,7 @@ const WATCH_DIR = "/tmp/ralph";
  */
 export class LocalWatcher extends EventEmitter {
   private tailedFiles = new Map<string, { lastData: number; offset: number }>();
+  private filePollers = new Map<string, ReturnType<typeof setInterval>>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
@@ -24,6 +25,16 @@ export class LocalWatcher extends EventEmitter {
     this.watchDir = watchDir ?? WATCH_DIR;
   }
 
+  deleteFile(filePath: string): Promise<void> {
+    this.tailedFiles.delete(filePath);
+    try {
+      unlinkSync(filePath);
+    } catch {
+      // File already gone — desired outcome
+    }
+    return Promise.resolve();
+  }
+
   start(): void {
     this.stopped = false;
     this.emit("vm_connection", this.vmId, "connected");
@@ -34,6 +45,10 @@ export class LocalWatcher extends EventEmitter {
 
   stop(): void {
     this.stopped = true;
+    for (const interval of this.filePollers.values()) {
+      clearInterval(interval);
+    }
+    this.filePollers.clear();
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -101,13 +116,13 @@ export class LocalWatcher extends EventEmitter {
     // Poll file for new content
     const poll = setInterval(() => {
       if (this.stopped) {
-        clearInterval(poll);
+        this.clearFilePoller(filePath);
         return;
       }
 
       const tracked = this.tailedFiles.get(filePath);
       if (!tracked) {
-        clearInterval(poll);
+        this.clearFilePoller(filePath);
         return;
       }
 
@@ -115,10 +130,18 @@ export class LocalWatcher extends EventEmitter {
         const stat = statSync(filePath);
         if (stat.size <= tracked.offset) return;
 
-        const content = readFileSync(filePath, "utf-8");
-        const newContent = content.slice(tracked.offset);
+        // Read only the new bytes using fd + offset
+        const bytesToRead = stat.size - tracked.offset;
+        const buf = Buffer.alloc(bytesToRead);
+        const fd = openSync(filePath, "r");
+        try {
+          readSync(fd, buf, 0, bytesToRead, tracked.offset);
+        } finally {
+          closeSync(fd);
+        }
         tracked.offset = stat.size;
 
+        const newContent = buf.toString("utf-8");
         if (newContent) {
           tracked.lastData = Date.now();
           const lines = newContent.split("\n");
@@ -131,9 +154,19 @@ export class LocalWatcher extends EventEmitter {
       } catch {
         // File removed or inaccessible
         this.tailedFiles.delete(filePath);
-        clearInterval(poll);
+        this.clearFilePoller(filePath);
       }
     }, 500);
+
+    this.filePollers.set(filePath, poll);
+  }
+
+  private clearFilePoller(filePath: string): void {
+    const interval = this.filePollers.get(filePath);
+    if (interval) {
+      clearInterval(interval);
+      this.filePollers.delete(filePath);
+    }
   }
 
   private startFilePoller(): void {

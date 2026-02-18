@@ -23,6 +23,8 @@ export class SshManager extends EventEmitter {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
+  /** Single multiplexed tail stream — null when not active */
+  private tailStream: ReturnType<Client["exec"]> extends void ? never : import("ssh2").ClientChannel | null = null;
 
   constructor(config: VmConfig) {
     super();
@@ -38,6 +40,24 @@ export class SshManager extends EventEmitter {
     this.connect();
   }
 
+  deleteFile(filePath: string): Promise<void> {
+    this.tailedFiles.delete(filePath);
+    return new Promise<void>((resolve) => {
+      if (!this.conn) {
+        resolve();
+        return;
+      }
+      this.conn.exec(`rm -f ${this.shellEscape(filePath)}`, (err, stream) => {
+        if (err) {
+          resolve(); // File gone is the desired outcome either way
+          return;
+        }
+        stream.on("close", () => resolve());
+        stream.on("error", () => resolve());
+      });
+    });
+  }
+
   stop(): void {
     this.stopped = true;
     if (this.pollTimer) {
@@ -48,6 +68,7 @@ export class SshManager extends EventEmitter {
       clearInterval(this.staleTimer);
       this.staleTimer = null;
     }
+    this.tailStream = null;
     if (this.conn) {
       this.conn.end();
       this.conn = null;
@@ -60,6 +81,11 @@ export class SshManager extends EventEmitter {
       return resolve(homedir(), keyPath.slice(2));
     }
     return resolve(keyPath);
+  }
+
+  /** Escape a string for use in single-quoted shell arguments */
+  private shellEscape(s: string): string {
+    return "'" + s.replace(/'/g, "'\\''") + "'";
   }
 
   private reconnecting = false;
@@ -77,7 +103,7 @@ export class SshManager extends EventEmitter {
       console.log(`[${this.vmId}] SSH connected`);
       this.reconnectDelay = 1000;
       this.emit("vm_connection", this.vmId, "connected");
-      this.discoverFiles();
+      this.discoverAndTail();
       this.startFilePoller();
       this.startStaleChecker();
     });
@@ -92,6 +118,7 @@ export class SshManager extends EventEmitter {
       if (!this.stopped) {
         this.emit("vm_connection", this.vmId, "disconnected");
         this.tailedFiles.clear();
+        this.tailStream = null;
         this.scheduleReconnect();
       }
     });
@@ -136,17 +163,115 @@ export class SshManager extends EventEmitter {
     setTimeout(() => this.connect(), delay);
   }
 
-  private discoverFiles(): void {
+  /**
+   * Discover JSONL files and start a single multiplexed tail.
+   * Uses only 1 SSH channel for all files via a shell script that
+   * prefixes each line with the source file path.
+   */
+  private discoverAndTail(): void {
     if (!this.conn || this.stopped) return;
 
     const watchDir = this.config.watchDir ?? "/tmp/ralph";
-    const cmd = `find "${watchDir}" -name '*.jsonl' 2>/dev/null`;
+    // Script that finds all JSONL files and tails them with file prefixes.
+    // Uses awk to prefix each line with the filename, separated by a tab.
+    // `tail --pid=$$` ensures tails die when the script exits.
+    const cmd = [
+      `cd ${this.shellEscape(watchDir)} 2>/dev/null || exit 0`,
+      `files=$(find . -name '*.jsonl' 2>/dev/null)`,
+      `[ -z "$files" ] && exit 0`,
+      // Print file list for discovery
+      `for f in $files; do echo "FILE:$f"; done`,
+      // Tail all files, prefix each line with filename
+      `for f in $files; do tail -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f	$line"; done & done`,
+      `wait`,
+    ].join("; ");
 
     this.conn.exec(cmd, (err, stream) => {
       if (err) {
         this.emit("vm_connection", this.vmId, "idle");
         return;
       }
+
+      this.tailStream = stream;
+      let buffer = "";
+      const watchDirPrefix = watchDir.endsWith("/") ? watchDir : watchDir + "/";
+
+      stream.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const rawLine of lines) {
+          if (!rawLine.trim()) continue;
+
+          // File discovery lines: "FILE:./path/to/file.jsonl"
+          if (rawLine.startsWith("FILE:")) {
+            const relPath = rawLine.slice(5);
+            const fullPath = relPath.startsWith("./")
+              ? watchDirPrefix + relPath.slice(2)
+              : watchDirPrefix + relPath;
+            if (!this.tailedFiles.has(fullPath)) {
+              this.tailedFiles.set(fullPath, { lastData: Date.now() });
+              this.emit("status", this.vmId, fullPath, "new");
+              console.log(`[${this.vmId}] Tailing ${fullPath}`);
+            }
+            continue;
+          }
+
+          // Data lines: "./path/to/file.jsonl\tJSON_LINE"
+          const tabIdx = rawLine.indexOf("\t");
+          if (tabIdx === -1) continue;
+
+          const relPath = rawLine.slice(0, tabIdx);
+          const line = rawLine.slice(tabIdx + 1);
+          const fullPath = relPath.startsWith("./")
+            ? watchDirPrefix + relPath.slice(2)
+            : watchDirPrefix + relPath;
+
+          const tracked = this.tailedFiles.get(fullPath);
+          if (tracked) tracked.lastData = Date.now();
+
+          if (line.trim()) {
+            this.emit("line", this.vmId, fullPath, line);
+          }
+        }
+      });
+
+      stream.on("close", () => {
+        this.tailStream = null;
+        // All tails died — will be rediscovered on next poll
+        this.tailedFiles.clear();
+      });
+
+      stream.stderr.on("data", (chunk: Buffer) => {
+        const msg = chunk.toString().trim();
+        if (msg) this.emit("error", this.vmId, new Error(msg));
+      });
+    });
+  }
+
+  /** Periodically check for new files and restart tail if needed */
+  private startFilePoller(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => {
+      if (!this.tailStream) {
+        // Tail stream died, restart discovery
+        this.discoverAndTail();
+      }
+      // For new files appearing after initial discovery,
+      // the tail stream won't catch them. Check periodically.
+      this.checkForNewFiles();
+    }, 10_000);
+  }
+
+  private checkForNewFiles(): void {
+    if (!this.conn || this.stopped) return;
+
+    const watchDir = this.config.watchDir ?? "/tmp/ralph";
+    const cmd = `find ${this.shellEscape(watchDir)} -name '*.jsonl' 2>/dev/null`;
+
+    this.conn.exec(cmd, (err, stream) => {
+      if (err) return;
 
       let data = "";
       stream.on("data", (chunk: Buffer) => {
@@ -155,65 +280,19 @@ export class SshManager extends EventEmitter {
 
       stream.on("close", () => {
         const files = data.trim().split("\n").filter(Boolean);
-        if (files.length === 0) {
-          this.emit("vm_connection", this.vmId, "idle");
-          return;
-        }
-
-        for (const file of files) {
-          if (!this.tailedFiles.has(file)) {
-            this.tailFile(file);
+        const newFiles = files.filter((f) => !this.tailedFiles.has(f));
+        if (newFiles.length > 0) {
+          console.log(`[${this.vmId}] Found ${newFiles.length} new file(s), restarting tail...`);
+          // Kill the old tail stream and restart with all files
+          if (this.tailStream) {
+            this.tailStream.close();
+            this.tailStream = null;
           }
+          this.tailedFiles.clear();
+          this.discoverAndTail();
         }
       });
     });
-  }
-
-  private tailFile(filePath: string): void {
-    if (!this.conn || this.stopped || this.tailedFiles.has(filePath)) return;
-
-    this.tailedFiles.set(filePath, { lastData: Date.now() });
-    this.emit("status", this.vmId, filePath, "new");
-
-    this.conn.exec(`tail -f "${filePath}"`, (err, stream) => {
-      if (err) {
-        this.tailedFiles.delete(filePath);
-        this.emit("error", this.vmId, err);
-        return;
-      }
-
-      let buffer = "";
-
-      stream.on("data", (chunk: Buffer) => {
-        const tracked = this.tailedFiles.get(filePath);
-        if (tracked) tracked.lastData = Date.now();
-
-        buffer += chunk.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (line.trim()) {
-            this.emit("line", this.vmId, filePath, line);
-          }
-        }
-      });
-
-      stream.on("close", () => {
-        this.tailedFiles.delete(filePath);
-      });
-
-      stream.stderr.on("data", (chunk: Buffer) => {
-        this.emit("error", this.vmId, new Error(chunk.toString()));
-      });
-    });
-  }
-
-  /** Periodically discover new files */
-  private startFilePoller(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = setInterval(() => {
-      this.discoverFiles();
-    }, 10_000);
   }
 
   /** Periodically check for stale files (no data in 5 min) */

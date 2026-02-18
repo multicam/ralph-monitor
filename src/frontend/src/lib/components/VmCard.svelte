@@ -1,9 +1,16 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import type { LoopState, MonitorEvent } from "../../../../../lib/types.ts";
   import { monitor } from "$lib/stores/connection.svelte.ts";
   import EventFeed from "./EventFeed.svelte";
 
   let { loop, events }: { loop: LoopState; events: MonitorEvent[] } = $props();
+
+  let now = $state(Date.now());
+  onMount(() => {
+    const id = setInterval(() => { now = Date.now(); }, 30_000);
+    return () => clearInterval(id);
+  });
 
   const isRunning = $derived(loop.health === "running");
   let manualOpen = $state<boolean | null>(null);
@@ -21,21 +28,21 @@
     loop.health === "stale" ? "\u25CB" : "\u25CB"
   );
 
-  const sessionLabel = $derived(() => {
+  const sessionLabel = $derived.by(() => {
     const parts = loop.sessionFile.split("/").pop() ?? "";
     return parts.replace(".jsonl", "");
   });
 
-  const timeLabel = $derived(() => {
+  const timeLabel = $derived.by(() => {
     if (loop.health === "running" && loop.startedAt) {
-      const ms = Date.now() - loop.startedAt;
+      const ms = now - loop.startedAt;
       const mins = Math.floor(ms / 60_000);
       if (mins < 60) return `${mins}m`;
       const hrs = Math.floor(mins / 60);
       return `${hrs}h ${mins % 60}m`;
     }
     if (loop.lastActivity) {
-      const ms = Date.now() - loop.lastActivity;
+      const ms = now - loop.lastActivity;
       const mins = Math.floor(ms / 60_000);
       if (mins < 1) return "just now";
       if (mins < 60) return `${mins}m ago`;
@@ -53,14 +60,19 @@
       monitor.fetchEvents(loop.loopId);
     }
   }
+
+  function deleteLoop(e: MouseEvent) {
+    e.stopPropagation();
+    fetch(`/api/loops/${encodeURIComponent(loop.loopId)}`, { method: "DELETE" });
+  }
 </script>
 
 <div class="card" class:expanded class:errored={loop.health === "errored"}>
-  <button class="card-header" onclick={toggle}>
+  <div class="card-header" role="button" tabindex="0" onclick={toggle} onkeydown={(e) => e.key === 'Enter' || e.key === ' ' ? toggle() : null}>
     <span class="health-dot" class:pulsing={isRunning} style="color: {healthColor}">
       {healthIcon}
     </span>
-    <h2 class="session-name">{sessionLabel()}</h2>
+    <h2 class="session-name">{sessionLabel}</h2>
 
     <div class="badges">
       {#if loop.mode}
@@ -77,9 +89,10 @@
       {/if}
     </div>
 
-    <span class="time-label">{timeLabel()}</span>
+    <span class="time-label">{timeLabel}</span>
     <span class="chevron">{expanded ? "\u25BE" : "\u25B8"}</span>
-  </button>
+    <button class="delete-btn" onclick={deleteLoop} title="Delete log">&times;</button>
+  </div>
 
   {#if expanded}
     <div class="card-body">
@@ -185,13 +198,29 @@
     color: #64748b;
   }
 
+  .delete-btn {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: #475569;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 2px;
+    line-height: 1;
+    border-radius: 3px;
+  }
+
+  .delete-btn:hover {
+    color: #f87171;
+    background: #f8717122;
+  }
+
   .card-body {
     flex: 1;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     border-top: 1px solid #2a2a4a;
-    min-height: 200px;
   }
 
   .loading {

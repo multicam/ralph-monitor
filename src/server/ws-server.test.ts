@@ -128,4 +128,42 @@ describe("WsRelay", () => {
     client1.ws.close();
     client2.ws.close();
   });
+
+  test("broadcasts loop_removed on delete", async () => {
+    mkdirSync(TEST_DIR, { recursive: true });
+    const filePath = join(TEST_DIR, "deletable.jsonl");
+    writeFileSync(filePath, "");
+
+    const config: AppConfig = {
+      server: { port: 0 },
+      vms: [{ name: "ws-del", host: "localhost", user: "test", local: true, watchDir: TEST_DIR }],
+    };
+    const { server, pipeline } = createTestServer(config);
+    pipeline.start();
+    const port = await listenOnRandomPort(server);
+    const { ws, messages } = await connectWs(port);
+
+    // Create a loop by appending data
+    appendFileSync(filePath, JSON.stringify({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+    }) + "\n");
+
+    await new Promise((r) => setTimeout(r, 800));
+
+    // Now delete it
+    const loopId = "ws-del:deletable.jsonl";
+    await pipeline.removeLoop(loopId);
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    const removedMsgs = messages.filter((m) => m.type === "loop_removed");
+    expect(removedMsgs.length).toBe(1);
+    if (removedMsgs[0]?.type === "loop_removed") {
+      expect(removedMsgs[0].loopId).toBe(loopId);
+    }
+
+    ws.close();
+    pipeline.stop();
+  });
 });

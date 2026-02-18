@@ -71,6 +71,8 @@ export type MonitorEvent =
 
 export type LoopConnectionStatus = "connected" | "disconnected" | "idle" | "inactive";
 
+export type LoopHealth = "running" | "completed" | "errored" | "stale";
+
 export interface VmConfig {
   name: string;
   host: string;
@@ -87,17 +89,31 @@ export function makeLoopId(vmName: string, sessionFile: string): string {
   return `${vmName}:${base}`;
 }
 
+/** Public-safe VM info (no credentials) */
+export interface VmConfigPublic {
+  name: string;
+  host: string;
+  user: string;
+  local?: boolean;
+}
+
+export function sanitizeVmConfig(config: VmConfig): VmConfigPublic {
+  return { name: config.name, host: config.host, user: config.user, local: config.local };
+}
+
 export interface LoopState {
   loopId: string;
   vmName: string;
-  vmConfig: VmConfig;
+  vmConfig: VmConfigPublic;
   sessionFile: string;
   status: LoopConnectionStatus;
+  health: LoopHealth;
   currentIteration: number;
   mode: string | null;
   branch: string | null;
   model: string | null;
   startedAt: number | null;
+  lastActivity: number | null;
 }
 
 // ── WebSocket Messages ──
@@ -120,7 +136,12 @@ export interface LoopStatusMessage {
   state: LoopState;
 }
 
-export type WsMessage = SnapshotMessage | EventMessage | LoopStatusMessage;
+export interface LoopRemovedMessage {
+  type: "loop_removed";
+  loopId: string;
+}
+
+export type WsMessage = SnapshotMessage | EventMessage | LoopStatusMessage | LoopRemovedMessage;
 
 // ── Config ──
 

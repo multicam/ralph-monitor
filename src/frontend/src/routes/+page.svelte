@@ -75,6 +75,7 @@
 
   .loop-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 12px;
     display: flex;

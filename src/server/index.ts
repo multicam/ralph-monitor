@@ -21,15 +21,50 @@ for (const vm of config.vms) {
 const port = config.server?.port ?? 3000;
 
 const server = createServer((req, res) => {
-  // Serve a minimal status endpoint
+  const cors = { "Access-Control-Allow-Origin": "*" };
+
   if (req.url === "/api/status") {
-    res.writeHead(200, { "Content-Type": "application/json" });
+    res.writeHead(200, { "Content-Type": "application/json", ...cors });
     const states = Object.fromEntries(pipeline.getLoopStates());
     res.end(JSON.stringify({ ok: true, loops: states }));
     return;
   }
 
-  // Everything else proxied to SvelteKit in dev, or served from build in prod
+  // On-demand event loading for closed cards
+  const eventsMatch = req.url?.match(/^\/api\/loops\/([^/]+)\/events$/);
+  if (eventsMatch) {
+    const loopId = decodeURIComponent(eventsMatch[1]!);
+    res.writeHead(200, { "Content-Type": "application/json", ...cors });
+    const events = pipeline.getRecentEvents(loopId, 100);
+    res.end(JSON.stringify({ loopId, events }));
+    return;
+  }
+
+  // Delete a loop and its JSONL file
+  const deleteMatch = req.url?.match(/^\/api\/loops\/([^/]+)$/);
+  if (deleteMatch && req.method === "DELETE") {
+    const loopId = decodeURIComponent(deleteMatch[1]!);
+    pipeline.removeLoop(loopId).then((found) => {
+      res.writeHead(found ? 200 : 404, { "Content-Type": "application/json", ...cors });
+      res.end(JSON.stringify({ ok: found, loopId }));
+    }).catch((err) => {
+      res.writeHead(500, { "Content-Type": "application/json", ...cors });
+      res.end(JSON.stringify({ ok: false, error: String(err) }));
+    });
+    return;
+  }
+
+  // CORS preflight for DELETE
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      ...cors,
+      "Access-Control-Allow-Methods": "GET, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    });
+    res.end();
+    return;
+  }
+
   res.writeHead(404);
   res.end("Not found");
 });

@@ -96,6 +96,14 @@ class MonitorStore {
         this.loops[msg.loopId] = msg.state;
         this.loops = { ...this.loops };
         break;
+
+      case "loop_removed": {
+        const { [msg.loopId]: _l, ...remainingLoops } = this.loops;
+        const { [msg.loopId]: _e, ...remainingEvents } = this.events;
+        this.loops = remainingLoops;
+        this.events = remainingEvents;
+        break;
+      }
     }
   }
 }

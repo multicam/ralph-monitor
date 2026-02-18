@@ -14,15 +14,16 @@ describe("parseLine", () => {
       session_id: "sess_1",
     });
 
-    const event = parseLine(line, "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("tool_call");
-    if (event!.type === "tool_call") {
-      expect(event!.toolName).toBe("Glob");
-      expect(event!.toolUseId).toBe("call_1");
-      expect(event!.model).toBe("glm-5");
-      expect(event!.sessionId).toBe("sess_1");
-      expect(event!.summary).toBe("Searching `src/**/*.ts`");
+    const events = parseLine(line, "vm-01");
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.type).toBe("tool_call");
+    if (event.type === "tool_call") {
+      expect(event.toolName).toBe("Glob");
+      expect(event.toolUseId).toBe("call_1");
+      expect(event.model).toBe("glm-5");
+      expect(event.sessionId).toBe("sess_1");
+      expect(event.summary).toBe("Searching `src/**/*.ts`");
     }
   });
 
@@ -36,13 +37,14 @@ describe("parseLine", () => {
       tool_use_result: { numFiles: 2, durationMs: 80, truncated: false },
     });
 
-    const event = parseLine(line, "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("tool_result");
-    if (event!.type === "tool_result") {
-      expect(event!.toolUseId).toBe("call_1");
-      expect(event!.durationMs).toBe(80);
-      expect(event!.summary).toBe("2 files found (80ms)");
+    const events = parseLine(line, "vm-01");
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.type).toBe("tool_result");
+    if (event.type === "tool_result") {
+      expect(event.toolUseId).toBe("call_1");
+      expect(event.durationMs).toBe(80);
+      expect(event.summary).toBe("2 files found (80ms)");
     }
   });
 
@@ -55,41 +57,66 @@ describe("parseLine", () => {
       },
     });
 
-    const event = parseLine(line, "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("thinking");
-    if (event!.type === "thinking") {
-      expect(event!.fullText).toBe("I need to analyze the authentication middleware...");
+    const events = parseLine(line, "vm-01");
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.type).toBe("thinking");
+    if (event.type === "thinking") {
+      expect(event.fullText).toBe("I need to analyze the authentication middleware...");
     }
   });
 
   test("parses loop boundary marker", () => {
-    const event = parseLine("======================== LOOP 7 ========================", "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("iteration");
-    if (event!.type === "iteration") {
-      expect(event!.iterationNumber).toBe(7);
+    const events = parseLine("======================== LOOP 7 ========================", "vm-01");
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.type).toBe("iteration");
+    if (event.type === "iteration") {
+      expect(event.iterationNumber).toBe(7);
     }
   });
 
   test("parses non-JSON line as raw event", () => {
-    const event = parseLine("Failed to push. Setting upstream and retrying...", "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("raw");
-    if (event!.type === "raw") {
-      expect(event!.line).toBe("Failed to push. Setting upstream and retrying...");
+    const events = parseLine("Failed to push. Setting upstream and retrying...", "vm-01");
+    expect(events).toHaveLength(1);
+    const event = events[0]!;
+    expect(event.type).toBe("raw");
+    if (event.type === "raw") {
+      expect(event.line).toBe("Failed to push. Setting upstream and retrying...");
     }
   });
 
-  test("returns null for empty lines", () => {
-    expect(parseLine("", "vm-01")).toBeNull();
-    expect(parseLine("   ", "vm-01")).toBeNull();
+  test("returns empty array for empty lines", () => {
+    expect(parseLine("", "vm-01")).toEqual([]);
+    expect(parseLine("   ", "vm-01")).toEqual([]);
   });
 
   test("handles malformed JSON gracefully", () => {
-    const event = parseLine("{broken json...", "vm-01");
-    expect(event).not.toBeNull();
-    expect(event!.type).toBe("raw");
+    const events = parseLine("{broken json...", "vm-01");
+    expect(events).toHaveLength(1);
+    expect(events[0]!.type).toBe("raw");
+  });
+
+  test("parses multiple content blocks", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        model: "sonnet",
+        content: [
+          { type: "text", text: "Let me check both files." },
+          { type: "tool_use", id: "call_1", name: "Read", input: { file_path: "/a.ts" } },
+          { type: "tool_use", id: "call_2", name: "Read", input: { file_path: "/b.ts" } },
+        ],
+      },
+      session_id: "s1",
+    });
+
+    const events = parseLine(line, "vm-01");
+    expect(events).toHaveLength(3);
+    expect(events[0]!.type).toBe("thinking");
+    expect(events[1]!.type).toBe("tool_call");
+    expect(events[2]!.type).toBe("tool_call");
   });
 });
 
@@ -162,7 +189,7 @@ describe("EventPairer", () => {
         session_id: "s1",
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     const result = parseLine(
       JSON.stringify({
@@ -171,7 +198,7 @@ describe("EventPairer", () => {
         tool_use_result: { numFiles: 1, durationMs: 50 },
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     const processed1 = pairer.process(call);
     expect(processed1.type).toBe("tool_call");
@@ -195,7 +222,7 @@ describe("EventPairer", () => {
         tool_use_result: {},
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     const processed = pairer.process(result);
     expect(processed.type).toBe("tool_result");
@@ -203,7 +230,7 @@ describe("EventPairer", () => {
 
   test("passes through non-tool events unchanged", () => {
     const pairer = new EventPairer();
-    const event = parseLine("======================== LOOP 3 ========================", "vm-01")!;
+    const event = parseLine("======================== LOOP 3 ========================", "vm-01")[0]!;
     const processed = pairer.process(event);
     expect(processed.type).toBe("iteration");
   });

@@ -22,6 +22,10 @@ export class WsRelay {
     pipeline.on("loop_status", (loopId: string, state: LoopState) => {
       this.broadcast({ type: "loop_status", loopId, state });
     });
+
+    pipeline.on("loop_removed", (loopId: string) => {
+      this.broadcast({ type: "loop_removed", loopId });
+    });
   }
 
   private sendSnapshot(ws: WebSocket): void {
@@ -31,7 +35,10 @@ export class WsRelay {
 
     for (const [loopId, state] of loopStates) {
       loops[loopId] = state;
-      recentEvents[loopId] = this.pipeline.getRecentEvents(loopId, 100);
+      // Only send events for running loops; others load on demand
+      if (state.health === "running") {
+        recentEvents[loopId] = this.pipeline.getRecentEvents(loopId, 100);
+      }
     }
 
     const msg: WsMessage = { type: "snapshot", loops, recentEvents };

@@ -1,0 +1,107 @@
+---
+name: dev
+description: "Start/restart dev server and monitor browser for errors via DevTools MCP"
+category: Development
+tags: [dev, server, browser, debugging]
+---
+
+Dev server management and browser error monitoring for ralph-monitor.
+
+**Arguments**: Optional action after `/dev`:
+- No args or `start`: Start the dev server and connect browser monitoring
+- `restart`: Kill existing dev processes and restart fresh
+- `check`: Check browser console for errors without restarting
+- `kill`: Stop all dev processes
+- `status`: Show what's running
+
+## Workflow
+
+### 1. Server Management
+
+**Starting/Restarting:**
+1. Kill any existing processes on ports 3000, 5173, 5174:
+   ```bash
+   lsof -ti:3000 -ti:5173 -ti:5174 2>/dev/null | xargs kill -9 2>/dev/null
+   ```
+2. Wait 1 second for ports to free up
+3. Start dev server in background:
+   ```bash
+   bun run dev 2>&1
+   ```
+   Run this as a background task. The command runs two processes:
+   - `bun --watch src/server/index.ts` (backend on port 3000, auto-restarts on file changes)
+   - `bunx vite dev --port 5173` (frontend with HMR)
+4. Wait 5 seconds, then read the background task output to verify:
+   - Server listening on port 3000
+   - SSH connected to VMs
+   - Files discovered and being tailed
+   - Vite ready on port 5173
+5. Report status to user
+
+**Checking status:**
+```bash
+lsof -i:3000 -i:5173 | grep LISTEN
+```
+
+**Killing:**
+```bash
+lsof -ti:3000 -ti:5173 -ti:5174 2>/dev/null | xargs kill -9 2>/dev/null
+```
+Also stop any background tasks tracking the dev server.
+
+### 2. Browser Error Monitoring (DevTools MCP)
+
+After the dev server is running, use the `devtools-mcp` skill to connect to the browser and check for errors.
+
+**IMPORTANT: Keep the browser open.** The user works alongside the browser during development. DevTools MCP should open/navigate the browser and leave it running — never close it.
+
+**Invoke the devtools-mcp skill tools to:**
+
+1. **Open the app**: Navigate to `http://localhost:5173` in the browser — **leave it open**
+2. **Check console errors**: Read the browser console for any JavaScript errors, Svelte errors, or network failures
+3. **Check network**: Look for failed WebSocket connections or API calls
+4. **Report findings**: Summarize any errors found and suggest fixes
+
+**On `/dev check`**: The browser should already be open from the initial `/dev start`. Just read the console and network state — don't re-navigate unless needed.
+
+### 3. When to Use
+
+**Use `/dev start` or `/dev restart`:**
+- At the beginning of a development session
+- After making server-side changes that `bun --watch` didn't pick up
+- After crashes or port conflicts
+- After changing `ralph-monitor.yaml` config
+
+**Use `/dev check`:**
+- After implementing frontend changes to verify they work
+- When the user reports something isn't working
+- To check for console errors after a change
+- As part of the implement-verify-fix loop
+
+**Use `/dev kill`:**
+- When done developing
+- Before running tests (to free ports)
+- When switching tasks
+
+### 4. Error Recovery
+
+If the dev server fails to start:
+- Check if ports are still in use: `lsof -i:3000 -i:5173`
+- Force kill with `-9` and retry
+- Check for TypeScript compilation errors in the output
+- Check if `ralph-monitor.yaml` exists and is valid
+
+If browser shows errors:
+- Read the specific error message from DevTools MCP
+- Fix the code
+- The frontend should auto-refresh via Vite HMR
+- Run `/dev check` again to verify the fix
+
+## Key Details
+
+- Backend: `http://localhost:3000` (API + WebSocket)
+- Frontend: `http://localhost:5173` (Vite dev server, proxies /ws and /api to backend)
+- Vite proxy config: `src/frontend/vite.config.ts`
+- The backend `bun --watch` auto-restarts on ANY server file change
+- The frontend Vite HMR auto-refreshes on ANY frontend file change
+- Only manual restart needed: config changes, dependency changes, or crashes

@@ -16,45 +16,52 @@ function nextId(): string {
 
 const LOOP_MARKER = /=+\s*LOOP\s+(\d+)\s*=+/;
 
-export function parseLine(line: string, loopId: string): MonitorEvent | null {
+export function parseLine(line: string, loopId: string, preParsed?: RawJsonlMessage | null): MonitorEvent[] {
   const trimmed = line.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return [];
 
   // Try loop boundary marker first
   const loopMatch = trimmed.match(LOOP_MARKER);
   if (loopMatch) {
-    return {
+    return [{
       id: nextId(),
       type: "iteration",
       timestamp: Date.now(),
       loopId,
       summary: `Iteration ${loopMatch[1]}`,
       iterationNumber: parseInt(loopMatch[1]!, 10),
-    } satisfies IterationEvent;
+    } satisfies IterationEvent];
   }
 
-  // Try JSON parse
+  // Use pre-parsed JSON if available, otherwise try parsing
   let msg: RawJsonlMessage;
-  try {
-    msg = JSON.parse(trimmed);
-  } catch {
-    return {
-      id: nextId(),
-      type: "raw",
-      timestamp: Date.now(),
-      loopId,
-      summary: trimmed.slice(0, 120),
-      line: trimmed,
-    } satisfies RawEvent;
+  if (preParsed) {
+    msg = preParsed;
+  } else {
+    try {
+      msg = JSON.parse(trimmed);
+    } catch {
+      return [{
+        id: nextId(),
+        type: "raw",
+        timestamp: Date.now(),
+        loopId,
+        summary: trimmed.slice(0, 120),
+        line: trimmed,
+      } satisfies RawEvent];
+    }
   }
 
   // Must have type and message
-  if (!msg.type || !msg.message?.content) return null;
+  if (!msg.type || !msg.message?.content) return [];
 
-  const content = msg.message.content[0];
-  if (!content) return null;
-
-  return parseContent(content, msg, loopId);
+  // Process all content blocks
+  const events: MonitorEvent[] = [];
+  for (const content of msg.message.content) {
+    const event = parseContent(content, msg, loopId);
+    if (event) events.push(event);
+  }
+  return events;
 }
 
 function parseContent(

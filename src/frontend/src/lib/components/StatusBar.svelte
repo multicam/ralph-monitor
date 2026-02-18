@@ -3,7 +3,7 @@
 
   let { allEvents, connected }: { allEvents: Record<string, MonitorEvent[]>; connected: boolean } = $props();
 
-  const stats = $derived(() => {
+  const stats = $derived.by(() => {
     const now = Date.now();
     const oneMinAgo = now - 60_000;
     const oneHourAgo = now - 3_600_000;
@@ -13,16 +13,18 @@
     let errors = 0;
 
     for (const events of Object.values(allEvents)) {
-      for (const event of events) {
+      // Iterate from end — events are chronological, break early when too old
+      for (let i = events.length - 1; i >= 0; i--) {
+        const event = events[i]!;
+        if (event.timestamp < oneHourAgo) break;
+
         if (event.timestamp > oneMinAgo) {
           if (event.type === "tool_call" || event.type === "tool_paired") {
             toolCallsPerMin++;
           }
         }
-        if (event.timestamp > oneHourAgo) {
-          if (event.type === "raw" && event.line.includes("Iteration")) {
-            commitsPerHour++;
-          }
+        if (event.type === "raw" && event.line.includes("Iteration")) {
+          commitsPerHour++;
         }
         if (event.type === "raw" && (event.line.includes("Error") || event.line.includes("error"))) {
           errors++;
@@ -38,10 +40,10 @@
   <span class="connection" class:connected>
     {connected ? "Connected" : "Disconnected"}
   </span>
-  <span class="stat">{stats().toolCallsPerMin} tool calls/min</span>
-  <span class="stat">{stats().commitsPerHour} commits/hr</span>
-  {#if stats().errors > 0}
-    <span class="stat error">{stats().errors} errors</span>
+  <span class="stat">{stats.toolCallsPerMin} tool calls/min</span>
+  <span class="stat">{stats.commitsPerHour} commits/hr</span>
+  {#if stats.errors > 0}
+    <span class="stat error">{stats.errors} errors</span>
   {/if}
 </div>
 

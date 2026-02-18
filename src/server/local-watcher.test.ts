@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdirSync, writeFileSync, rmSync, appendFileSync } from "fs";
+import { mkdirSync, writeFileSync, rmSync, appendFileSync, existsSync } from "fs";
 import { join } from "path";
 import { LocalWatcher } from "./local-watcher.ts";
 
@@ -135,5 +135,24 @@ describe("LocalWatcher", () => {
     watcher.stop();
     // Should not throw on double stop
     expect(() => watcher.stop()).not.toThrow();
+  });
+
+  test("deleteFile removes the file and cleans tailedFiles", async () => {
+    const filePath = join(TEST_DIR, "to-delete.jsonl");
+    writeFileSync(filePath, "some content\n");
+
+    const watcher = new LocalWatcher("test-vm", TEST_DIR);
+    watcher.start();
+    await new Promise((r) => setTimeout(r, 50));
+
+    await watcher.deleteFile(filePath);
+
+    expect(existsSync(filePath)).toBe(false);
+    watcher.stop();
+  });
+
+  test("deleteFile handles already-deleted file gracefully", async () => {
+    const watcher = new LocalWatcher("test-vm", TEST_DIR);
+    await expect(watcher.deleteFile("/tmp/nonexistent-" + process.pid + ".jsonl")).resolves.toBeUndefined();
   });
 });

@@ -16,7 +16,7 @@ describe("EventPairer.getPending", () => {
         session_id: "s1",
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     pairer.process(call);
     const pending = pairer.getPending();
@@ -39,7 +39,7 @@ describe("EventPairer.getPending", () => {
         session_id: "s1",
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     const result = parseLine(
       JSON.stringify({
@@ -51,7 +51,7 @@ describe("EventPairer.getPending", () => {
         tool_use_result: { numFiles: 1 },
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     pairer.process(call);
     pairer.process(result);
@@ -75,7 +75,7 @@ describe("EventPairer.pruneStale", () => {
         session_id: "s1",
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     pairer.process(call);
     // With timeout=0, the call is immediately stale
@@ -97,7 +97,7 @@ describe("EventPairer.pruneStale", () => {
         session_id: "s1",
       }),
       "vm-01",
-    )!;
+    )[0]!;
 
     pairer.process(call);
     pairer.pruneStale();
@@ -107,36 +107,36 @@ describe("EventPairer.pruneStale", () => {
 });
 
 describe("parseLine edge cases", () => {
-  test("returns null for JSON with no type field", () => {
-    const event = parseLine(JSON.stringify({ foo: "bar" }), "vm-01");
-    expect(event).toBeNull();
+  test("returns empty for JSON with no type field", () => {
+    const events = parseLine(JSON.stringify({ foo: "bar" }), "vm-01");
+    expect(events).toEqual([]);
   });
 
-  test("returns null for JSON with type but no message.content", () => {
-    const event = parseLine(
+  test("returns empty for JSON with type but no message.content", () => {
+    const events = parseLine(
       JSON.stringify({ type: "assistant", message: { role: "assistant" } }),
       "vm-01",
     );
-    expect(event).toBeNull();
+    expect(events).toEqual([]);
   });
 
-  test("returns null for JSON with empty content array", () => {
-    const event = parseLine(
+  test("returns empty for JSON with empty content array", () => {
+    const events = parseLine(
       JSON.stringify({ type: "assistant", message: { role: "assistant", content: [] } }),
       "vm-01",
     );
-    expect(event).toBeNull();
+    expect(events).toEqual([]);
   });
 
-  test("returns null for text events with only whitespace", () => {
-    const event = parseLine(
+  test("returns empty for text events with only whitespace", () => {
+    const events = parseLine(
       JSON.stringify({
         type: "assistant",
         message: { role: "assistant", content: [{ type: "text", text: "   " }] },
       }),
       "vm-01",
     );
-    expect(event).toBeNull();
+    expect(events).toEqual([]);
   });
 
   test("WebSearch summary", () => {
