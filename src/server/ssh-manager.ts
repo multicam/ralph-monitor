@@ -139,7 +139,10 @@ export class SshManager extends EventEmitter {
   private discoverFiles(): void {
     if (!this.conn || this.stopped) return;
 
-    this.conn.exec("find /tmp/ralph -name '*.jsonl' 2>/dev/null", (err, stream) => {
+    const watchDir = this.config.watchDir ?? "/tmp/ralph";
+    const cmd = `find "${watchDir}" -name '*.jsonl' 2>/dev/null`;
+
+    this.conn.exec(cmd, (err, stream) => {
       if (err) {
         this.emit("vm_connection", this.vmId, "idle");
         return;

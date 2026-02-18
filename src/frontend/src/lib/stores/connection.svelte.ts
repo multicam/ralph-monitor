@@ -8,15 +8,11 @@ class MonitorStore {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Group loops by VM name */
-  get vmGroups(): Record<string, LoopState[]> {
-    const groups: Record<string, LoopState[]> = {};
-    for (const state of Object.values(this.loops)) {
-      const vm = state.vmName;
-      if (!groups[vm]) groups[vm] = [];
-      groups[vm].push(state);
-    }
-    return groups;
+  /** Loops sorted by last activity (most recent first) */
+  get sortedLoops(): LoopState[] {
+    return Object.values(this.loops).sort((a, b) => {
+      return (b.lastActivity ?? 0) - (a.lastActivity ?? 0);
+    });
   }
 
   connect() {
@@ -53,6 +49,19 @@ class MonitorStore {
     this.ws = null;
   }
 
+  /** Fetch events on demand for a closed card that was opened */
+  async fetchEvents(loopId: string): Promise<void> {
+    if (this.events[loopId]?.length) return; // Already loaded
+    try {
+      const res = await fetch(`/api/loops/${encodeURIComponent(loopId)}/events`);
+      const data = await res.json();
+      this.events[loopId] = data.events ?? [];
+      this.events = { ...this.events };
+    } catch {
+      // Silently fail — card will show empty
+    }
+  }
+
   private scheduleReconnect() {
     this.reconnectTimer = setTimeout(() => {
       this.connect();
@@ -62,8 +71,9 @@ class MonitorStore {
   private handleMessage(msg: WsMessage) {
     switch (msg.type) {
       case "snapshot":
-        this.loops = msg.loops;
-        this.events = msg.recentEvents;
+        this.loops = { ...msg.loops };
+        // Merge events — snapshot only includes running loops now
+        this.events = { ...this.events, ...msg.recentEvents };
         break;
 
       case "event": {

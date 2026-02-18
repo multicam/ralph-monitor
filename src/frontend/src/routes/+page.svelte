@@ -9,29 +9,25 @@
     return () => monitor.disconnect();
   });
 
-  const vmGroups = $derived(Object.entries(monitor.vmGroups));
+  const sortedLoops = $derived(monitor.sortedLoops);
   const totalLoops = $derived(Object.keys(monitor.loops).length);
 </script>
 
 <div class="dashboard">
   <header>
     <h1>ralph-monitor</h1>
-    <span class="meta">{vmGroups.length} VM{vmGroups.length !== 1 ? "s" : ""} / {totalLoops} loop{totalLoops !== 1 ? "s" : ""}</span>
+    <span class="meta">{totalLoops} loop{totalLoops !== 1 ? "s" : ""}</span>
+    <span class="connection" class:connected={monitor.connected}>
+      {monitor.connected ? "Connected" : "Disconnected"}
+    </span>
   </header>
 
-  <div class="vm-groups">
-    {#each vmGroups as [vmName, loops] (vmName)}
-      <section class="vm-group">
-        <h2 class="vm-name">{vmName}</h2>
-        <div class="loop-grid" style="--cols: {Math.min(loops.length, 3)}">
-          {#each loops as state (state.loopId)}
-            <VmCard {state} events={monitor.events[state.loopId] ?? []} />
-          {/each}
-        </div>
-      </section>
+  <div class="loop-list">
+    {#each sortedLoops as loop (loop.loopId)}
+      <VmCard {loop} events={monitor.events[loop.loopId] ?? []} />
     {/each}
 
-    {#if vmGroups.length === 0}
+    {#if sortedLoops.length === 0}
       <div class="empty">Waiting for loops...</div>
     {/if}
   </div>
@@ -64,36 +60,26 @@
   .meta {
     font-size: 12px;
     color: #64748b;
+    flex: 1;
   }
 
-  .vm-groups {
+  .connection {
+    font-size: 12px;
+    color: #f87171;
+    font-family: monospace;
+  }
+
+  .connection.connected {
+    color: #4ade80;
+  }
+
+  .loop-list {
     flex: 1;
     overflow-y: auto;
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-  }
-
-  .vm-group {
-    display: flex;
-    flex-direction: column;
     gap: 8px;
-  }
-
-  .vm-name {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 500;
-    color: #64748b;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .loop-grid {
-    display: grid;
-    grid-template-columns: repeat(var(--cols), 1fr);
-    gap: 12px;
   }
 
   .empty {

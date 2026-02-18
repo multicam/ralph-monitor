@@ -9,7 +9,8 @@
     "dev:frontend": "cd src/frontend && bunx vite dev --port 5173",
     "build": "cd src/frontend && bunx vite build",
     "start": "bun src/server/index.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",

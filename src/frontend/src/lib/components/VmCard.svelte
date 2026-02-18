@@ -1,147 +1,205 @@
 <script lang="ts">
   import type { LoopState, MonitorEvent } from "../../../../../lib/types.ts";
+  import { monitor } from "$lib/stores/connection.svelte.ts";
   import EventFeed from "./EventFeed.svelte";
 
-  let { state, events }: { state: LoopState; events: MonitorEvent[] } = $props();
+  let { loop, events }: { loop: LoopState; events: MonitorEvent[] } = $props();
 
-  const statusColor = $derived(
-    state.status === "connected" ? "#4ade80" :
-    state.status === "inactive" ? "#fbbf24" :
-    state.status === "disconnected" ? "#f87171" : "#9ca3af"
+  const isRunning = $derived(loop.health === "running");
+  let manualOpen = $state<boolean | null>(null);
+  const expanded = $derived(manualOpen ?? isRunning);
+
+  const healthColor = $derived(
+    loop.health === "running" ? "#4ade80" :
+    loop.health === "errored" ? "#f87171" :
+    loop.health === "stale" ? "#fbbf24" : "#64748b"
   );
 
-  const isInactive = $derived(state.status === "inactive");
+  const healthIcon = $derived(
+    loop.health === "running" ? "\u25CF" :
+    loop.health === "errored" ? "\u2715" :
+    loop.health === "stale" ? "\u25CB" : "\u25CB"
+  );
 
   const sessionLabel = $derived(() => {
-    const parts = state.sessionFile.split("/").pop() ?? "";
+    const parts = loop.sessionFile.split("/").pop() ?? "";
     return parts.replace(".jsonl", "");
   });
 
-  const uptime = $derived(() => {
-    if (!state.startedAt) return "";
-    const ms = Date.now() - state.startedAt;
-    const mins = Math.floor(ms / 60_000);
-    if (mins < 60) return `${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    return `${hrs}h ${mins % 60}m`;
+  const timeLabel = $derived(() => {
+    if (loop.health === "running" && loop.startedAt) {
+      const ms = Date.now() - loop.startedAt;
+      const mins = Math.floor(ms / 60_000);
+      if (mins < 60) return `${mins}m`;
+      const hrs = Math.floor(mins / 60);
+      return `${hrs}h ${mins % 60}m`;
+    }
+    if (loop.lastActivity) {
+      const ms = Date.now() - loop.lastActivity;
+      const mins = Math.floor(ms / 60_000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return `${hrs}h ago`;
+      return `${Math.floor(hrs / 24)}d ago`;
+    }
+    return "";
   });
+
+  function toggle() {
+    const next = !expanded;
+    manualOpen = next;
+    if (next && !events.length) {
+      monitor.fetchEvents(loop.loopId);
+    }
+  }
 </script>
 
-<div class="vm-card" class:inactive={isInactive}>
-  <div class="vm-header">
-    <div class="vm-title">
-      <span class="status-dot" style="background: {statusColor}"></span>
-      <h2>{sessionLabel()}</h2>
+<div class="card" class:expanded class:errored={loop.health === "errored"}>
+  <button class="card-header" onclick={toggle}>
+    <span class="health-dot" class:pulsing={isRunning} style="color: {healthColor}">
+      {healthIcon}
+    </span>
+    <h2 class="session-name">{sessionLabel()}</h2>
+
+    <div class="badges">
+      {#if loop.mode}
+        <span class="badge">{loop.mode}</span>
+      {/if}
+      {#if loop.currentIteration > 0}
+        <span class="badge">#{loop.currentIteration}</span>
+      {/if}
+      {#if loop.model}
+        <span class="badge">{loop.model}</span>
+      {/if}
+      {#if loop.branch}
+        <span class="badge branch">{loop.branch}</span>
+      {/if}
     </div>
-    <div class="vm-meta">
-      {#if state.mode}
-        <span class="badge">{state.mode}</span>
-      {/if}
-      {#if state.currentIteration > 0}
-        <span class="badge">#{state.currentIteration}</span>
-      {/if}
-      {#if state.model}
-        <span class="badge">{state.model}</span>
+
+    <span class="time-label">{timeLabel()}</span>
+    <span class="chevron">{expanded ? "\u25BE" : "\u25B8"}</span>
+  </button>
+
+  {#if expanded}
+    <div class="card-body">
+      {#if events.length > 0}
+        <EventFeed {events} />
+      {:else}
+        <div class="loading">Loading events...</div>
       {/if}
     </div>
-  </div>
-
-  {#if state.branch}
-    <div class="vm-branch">{state.branch}</div>
-  {/if}
-
-  {#if state.status === "idle"}
-    <div class="vm-idle">No active loop</div>
-  {:else if state.status === "disconnected"}
-    <div class="vm-disconnected">Disconnected</div>
-  {:else}
-    <EventFeed events={events} />
-  {/if}
-
-  {#if state.startedAt}
-    <div class="vm-footer">{uptime()}</div>
   {/if}
 </div>
 
 <style>
-  .vm-card {
+  .card {
     background: #1a1a2e;
     border: 1px solid #2a2a4a;
     border-radius: 8px;
-    padding: 16px;
+    overflow: hidden;
+  }
+
+  .card.errored {
+    border-color: #f8717133;
+  }
+
+  .card.expanded {
+    max-height: 600px;
     display: flex;
     flex-direction: column;
-    min-height: 300px;
-    max-height: 600px;
   }
 
-  .vm-card.inactive {
-    opacity: 0.5;
-  }
-
-  .vm-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-
-  .vm-title {
+  .card-header {
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: monospace;
+    color: #cbd5e1;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
   }
 
-  .vm-title h2 {
+  .card-header:hover {
+    background: #1e1e36;
+  }
+
+  .health-dot {
+    flex-shrink: 0;
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  .health-dot.pulsing {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .session-name {
     margin: 0;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
     color: #e2e8f0;
+    white-space: nowrap;
   }
 
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .vm-meta {
+  .badges {
     display: flex;
     gap: 4px;
+    flex: 1;
+    justify-content: flex-end;
   }
 
   .badge {
-    font-size: 11px;
-    padding: 2px 6px;
-    border-radius: 4px;
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
     background: #2a2a4a;
     color: #94a3b8;
-    font-family: monospace;
   }
 
-  .vm-branch {
-    font-size: 12px;
+  .badge.branch {
+    color: #818cf8;
+  }
+
+  .time-label {
+    flex-shrink: 0;
+    font-size: 11px;
     color: #64748b;
-    font-family: monospace;
-    margin-bottom: 8px;
+    min-width: 50px;
+    text-align: right;
   }
 
-  .vm-idle, .vm-disconnected {
+  .chevron {
+    flex-shrink: 0;
+    font-size: 10px;
+    color: #64748b;
+  }
+
+  .card-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid #2a2a4a;
+    min-height: 200px;
+  }
+
+  .loading {
     flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #64748b;
-    font-size: 13px;
-  }
-
-  .vm-footer {
-    font-size: 11px;
-    color: #64748b;
-    text-align: right;
-    margin-top: 8px;
-    padding-top: 8px;
-    border-top: 1px solid #2a2a4a;
+    color: #475569;
+    font-size: 12px;
   }
 </style>
