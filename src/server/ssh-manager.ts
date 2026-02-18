@@ -271,7 +271,7 @@ export class SshManager extends EventEmitter {
     const cmd = `find ${this.shellEscape(watchDir)} -name '*.jsonl' 2>/dev/null`;
 
     this.conn.exec(cmd, (err, stream) => {
-      if (err) return;
+      if (err) { console.error(`[${this.vmId}] checkForNewFiles exec error:`, err.message); return; }
 
       let data = "";
       stream.on("data", (chunk: Buffer) => {
