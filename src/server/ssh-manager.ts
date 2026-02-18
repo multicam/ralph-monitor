@@ -165,26 +165,36 @@ export class SshManager extends EventEmitter {
 
   /**
    * Discover JSONL files and start a single multiplexed tail.
-   * Uses only 1 SSH channel for all files via a shell script that
-   * prefixes each line with the source file path.
+   * Uses only 1 SSH channel via a shell script that:
+   * - Finds all .jsonl files and tails them with file prefixes
+   * - Periodically re-scans for new files and starts tailing them too
+   * This eliminates the need for separate SSH channels for file polling.
    */
   private discoverAndTail(): void {
     if (!this.conn || this.stopped) return;
 
     const watchDir = this.config.watchDir ?? "/tmp/ralph";
-    // Script that finds all JSONL files and tails them with file prefixes.
-    // Uses awk to prefix each line with the filename, separated by a tab.
-    // `tail --pid=$$` ensures tails die when the script exits.
-    const cmd = [
-      `cd ${this.shellEscape(watchDir)} 2>/dev/null || exit 0`,
-      `files=$(find . -name '*.jsonl' 2>/dev/null)`,
-      `[ -z "$files" ] && exit 0`,
-      // Print file list for discovery
-      `for f in $files; do echo "FILE:$f"; done`,
-      // Tail all files, prefix each line with filename
-      `for f in $files; do tail -n 50 -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f	$line"; done & done`,
-      `wait`,
-    ].join("; ");
+    // Self-contained shell script that runs in a single SSH channel.
+    // It discovers files, tails them, and periodically checks for new ones.
+    // New files get their own tail processes spawned within the same shell.
+    // "FILE:" lines signal discovery, "path\tline" lines carry data.
+    const cmd = `
+cd ${this.shellEscape(watchDir)} 2>/dev/null || exit 0
+tailed=""
+start_tail() {
+  local f="$1"
+  case "$tailed" in *"|$f|"*) return ;; esac
+  tailed="$tailed|$f|"
+  echo "FILE:$f"
+  tail -n 50 -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f\t$line"; done &
+}
+while true; do
+  for f in $(find . -name '*.jsonl' 2>/dev/null); do
+    start_tail "$f"
+  done
+  sleep 10
+done
+`;
 
     this.conn.exec(cmd, (err, stream) => {
       if (err) {
@@ -250,49 +260,15 @@ export class SshManager extends EventEmitter {
     });
   }
 
-  /** Periodically check for new files and restart tail if needed */
+  /** Periodically check if the tail stream died and restart it */
   private startFilePoller(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => {
       if (!this.tailStream) {
-        // Tail stream died, restart discovery
+        console.log(`[${this.vmId}] Tail stream died, restarting discovery...`);
         this.discoverAndTail();
       }
-      // For new files appearing after initial discovery,
-      // the tail stream won't catch them. Check periodically.
-      this.checkForNewFiles();
-    }, 10_000);
-  }
-
-  private checkForNewFiles(): void {
-    if (!this.conn || this.stopped) return;
-
-    const watchDir = this.config.watchDir ?? "/tmp/ralph";
-    const cmd = `find ${this.shellEscape(watchDir)} -name '*.jsonl' 2>/dev/null`;
-
-    this.conn.exec(cmd, (err, stream) => {
-      if (err) { console.error(`[${this.vmId}] checkForNewFiles exec error:`, err.message); return; }
-
-      let data = "";
-      stream.on("data", (chunk: Buffer) => {
-        data += chunk.toString();
-      });
-
-      stream.on("close", () => {
-        const files = data.trim().split("\n").filter(Boolean);
-        const newFiles = files.filter((f) => !this.tailedFiles.has(f));
-        if (newFiles.length > 0) {
-          console.log(`[${this.vmId}] Found ${newFiles.length} new file(s), restarting tail...`);
-          // Kill the old tail stream and restart with all files
-          if (this.tailStream) {
-            this.tailStream.close();
-            this.tailStream = null;
-          }
-          this.tailedFiles.clear();
-          this.discoverAndTail();
-        }
-      });
-    });
+    }, 15_000);
   }
 
   /** Periodically check for stale files (no data in 5 min) */
