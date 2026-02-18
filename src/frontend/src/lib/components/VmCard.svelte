@@ -111,6 +111,7 @@
     border: 1px solid #2a2a4a;
     border-radius: 8px;
     overflow: hidden;
+    flex-shrink: 0;
   }
 
   .card.errored {
@@ -118,7 +119,6 @@
   }
 
   .card.expanded {
-    max-height: 600px;
     display: flex;
     flex-direction: column;
   }
@@ -216,10 +216,6 @@
   }
 
   .card-body {
-    flex: 1;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
     border-top: 1px solid #2a2a4a;
   }
 

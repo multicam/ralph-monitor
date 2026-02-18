@@ -11,6 +11,22 @@
 
   const sortedLoops = $derived(monitor.sortedLoops);
   const totalLoops = $derived(Object.keys(monitor.loops).length);
+
+  let listEl: HTMLElement;
+  let userScrolled = $state(false);
+
+  function onScroll() {
+    if (!listEl) return;
+    const atBottom = listEl.scrollHeight - listEl.scrollTop - listEl.clientHeight < 40;
+    userScrolled = !atBottom;
+  }
+
+  $effect(() => {
+    // Auto-scroll to bottom when events change (if user hasn't scrolled up)
+    if (!userScrolled && listEl && sortedLoops.length) {
+      listEl.scrollTop = listEl.scrollHeight;
+    }
+  });
 </script>
 
 <div class="dashboard">
@@ -22,7 +38,7 @@
     </span>
   </header>
 
-  <div class="loop-list">
+  <div class="loop-list" bind:this={listEl} onscroll={onScroll}>
     {#each sortedLoops as loop (loop.loopId)}
       <VmCard {loop} events={monitor.events[loop.loopId] ?? []} />
     {/each}
@@ -40,6 +56,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
+    overflow: hidden;
   }
 
   header {
@@ -81,6 +98,8 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a4a transparent;
   }
 
   .empty {

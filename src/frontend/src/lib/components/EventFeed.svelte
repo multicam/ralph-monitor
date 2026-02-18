@@ -3,38 +3,18 @@
   import EventRow from "./EventRow.svelte";
 
   let { events }: { events: MonitorEvent[] } = $props();
-
-  let container: HTMLElement;
-  let userScrolled = $state(false);
-
-  function onScroll() {
-    if (!container) return;
-    // With column-reverse, scrollTop 0 = newest (bottom). Negative = scrolled up.
-    userScrolled = container.scrollTop < -20;
-  }
-
-  $effect(() => {
-    // Auto-scroll to newest when new events arrive (if user hasn't scrolled up)
-    if (!userScrolled && container && events.length) {
-      container.scrollTop = 0;
-    }
-  });
 </script>
 
-<div class="feed" bind:this={container} onscroll={onScroll}>
-  {#each events as event (event.id)}
+<div class="feed">
+  {#each events as event, i (event.id + '_' + i)}
     <EventRow {event} />
   {/each}
 </div>
 
 <style>
   .feed {
-    flex: 1;
-    overflow-y: auto;
     display: flex;
-    flex-direction: column-reverse;
+    flex-direction: column;
     gap: 2px;
-    scrollbar-width: thin;
-    scrollbar-color: #2a2a4a transparent;
   }
 </style>
