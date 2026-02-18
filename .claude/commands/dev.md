@@ -51,18 +51,22 @@ Also stop any background tasks tracking the dev server.
 
 ### 2. Browser Error Monitoring (DevTools MCP)
 
-After the dev server is running, use the `devtools-mcp` skill to connect to the browser and check for errors.
+After the dev server is running, call MCP tools directly to check for browser errors.
+Do NOT invoke the `devtools-mcp` skill — just call the `mcp__brave-devtools__*` tools yourself.
 
-**IMPORTANT: Keep the browser open.** The user works alongside the browser during development. DevTools MCP should open/navigate the browser and leave it running — never close it.
+**IMPORTANT: Keep the browser open.** The user works alongside the browser during development. Never close pages.
 
-**Invoke the devtools-mcp skill tools to:**
+**On `/dev start` or `/dev restart`:**
+1. `mcp__brave-devtools__navigate_page` → url: `http://localhost:5173`
+2. `mcp__brave-devtools__list_console_messages` → types: `["error", "warn"]`
+3. `mcp__brave-devtools__list_network_requests` → resourceTypes: `["xhr", "fetch", "websocket"]`
+4. Report findings — summarize errors and suggest fixes
 
-1. **Open the app**: Navigate to `http://localhost:5173` in the browser — **leave it open**
-2. **Check console errors**: Read the browser console for any JavaScript errors, Svelte errors, or network failures
-3. **Check network**: Look for failed WebSocket connections or API calls
-4. **Report findings**: Summarize any errors found and suggest fixes
-
-**On `/dev check`**: The browser should already be open from the initial `/dev start`. Just read the console and network state — don't re-navigate unless needed.
+**On `/dev check`:**
+The browser should already be open. Don't re-navigate unless needed.
+1. `mcp__brave-devtools__list_console_messages` → types: `["error", "warn"]`
+2. `mcp__brave-devtools__list_network_requests` → resourceTypes: `["xhr", "fetch", "websocket"]`
+3. Report findings
 
 ### 3. When to Use
 
@@ -92,7 +96,7 @@ If the dev server fails to start:
 - Check if `ralph-monitor.yaml` exists and is valid
 
 If browser shows errors:
-- Read the specific error message from DevTools MCP
+- Use `mcp__brave-devtools__get_console_message` for stack traces on specific errors
 - Fix the code
 - The frontend should auto-refresh via Vite HMR
 - Run `/dev check` again to verify the fix
