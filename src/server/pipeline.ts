@@ -145,6 +145,7 @@ export class Pipeline extends EventEmitter {
       mode: null,
       branch: null,
       model: null,
+      project: null,
       startedAt: parseSessionTimestamp(sessionFile),
       finishedAt: null,
       lastActivity: Date.now(),
@@ -244,6 +245,15 @@ export class Pipeline extends EventEmitter {
     if (parsed?.message?.model && parsed.message.model !== state.model) {
       state.model = parsed.message.model;
       this.emit("loop_status", loopId, state);
+    }
+
+    // Extract project from init message: {"type":"system","subtype":"init","cwd":"/path/to/project"}
+    if (!state.project && parsed) {
+      const raw = parsed as Record<string, unknown>;
+      if (raw.type === "system" && raw.subtype === "init" && typeof raw.cwd === "string") {
+        state.project = (raw.cwd as string).split("/").pop() ?? null;
+        this.emit("loop_status", loopId, state);
+      }
     }
   }
 

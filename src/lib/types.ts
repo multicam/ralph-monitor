@@ -112,6 +112,7 @@ export interface LoopState {
   mode: string | null;
   branch: string | null;
   model: string | null;
+  project: string | null;
   startedAt: number | null;
   finishedAt: number | null;
   lastActivity: number | null;

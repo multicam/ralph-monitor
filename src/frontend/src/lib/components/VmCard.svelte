@@ -77,7 +77,7 @@
     <span class="health-dot" class:pulsing={isRunning} style="color: {healthColor}">
       {healthIcon}
     </span>
-    <h2 class="session-name">{sessionLabel}</h2>
+    <h2 class="session-name">{#if loop.project}<span class="project">{loop.project}/</span>{/if}{sessionLabel}</h2>
 
     <div class="badges">
       {#if loop.mode}
@@ -184,6 +184,11 @@
     font-weight: 600;
     color: #e2e8f0;
     white-space: nowrap;
+  }
+
+  .project {
+    color: #818cf8;
+    font-weight: 400;
   }
 
   .badges {
