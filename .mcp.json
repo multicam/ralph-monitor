@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "brave-devtools": {
+      "command": "chrome-devtools-mcp",
+      "args": [
+        "--executablePath", "/snap/bin/brave",
+        "--isolated",
+        "--viewport", "1920x1080",
+        "--acceptInsecureCerts",
+        "--no-usage-statistics",
+        "--logFile", "/tmp/chrome-devtools-mcp.log"
+      ],
+      "env": {
+        "DEBUG": "",
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1"
+      }
+    }
+  }
+}
