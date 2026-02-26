@@ -10,7 +10,8 @@
     "build": "cd src/frontend && bunx vite build",
     "start": "bun src/server/index.ts",
     "test": "bun test",
-    "test:coverage": "bun test --coverage"
+    "test:coverage": "bun test --coverage",
+    "update": "bun update --latest --interactive"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
@@ -19,7 +20,7 @@
     "@types/bun": "latest",
     "@types/ssh2": "^1.15.5",
     "@types/ws": "^8.18.1",
-    "svelte": "^5.51.2",
+    "svelte": "^5.53.5",
     "vite": "^7.3.1"
   },
   "peerDependencies": {

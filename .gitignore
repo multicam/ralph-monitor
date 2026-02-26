@@ -31,9 +31,11 @@ ralph-monitor.yaml
 *.tsbuildinfo
 
 # IntelliJ based IDEs
-.idea
+.idea/
+thoughts/
 
 # Finder (MacOS) folder config
 .DS_Store
 
 
+.svelte
