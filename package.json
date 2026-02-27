@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "bun run dev:server & bun run dev:frontend",
     "dev:server": "bun --watch src/server/index.ts",
-    "dev:frontend": "cd src/frontend && bunx vite dev --port 6020",
+    "dev:frontend": "bun scripts/dev-frontend.ts",
     "build": "cd src/frontend && bunx vite build",
     "start": "bun src/server/index.ts",
     "test": "bun test",

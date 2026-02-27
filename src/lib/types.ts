@@ -149,6 +149,7 @@ export type WsMessage = SnapshotMessage | EventMessage | LoopStatusMessage | Loo
 
 export interface AppConfig {
   server: { port: number };
+  frontend?: { port: number };
   vms: VmConfig[];
 }
 
