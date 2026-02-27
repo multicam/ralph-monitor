@@ -77,7 +77,7 @@
     <span class="health-dot" class:pulsing={isRunning} style="color: {healthColor}">
       {healthIcon}
     </span>
-    <h2 class="session-name"><span class="vm-name">{loop.vmName}</span>{#if loop.project}<span class="project">/{loop.project}</span>{/if}<span class="separator">/</span>{sessionLabel}</h2>
+    <h2 class="session-name"><span class="vm-name">{loop.vmName}</span>{#if loop.project}<span class="project-tag">{loop.project}</span>{/if}<span class="separator">/</span>{sessionLabel}</h2>
 
     <div class="badges">
       {#if loop.mode}
@@ -191,9 +191,17 @@
     font-weight: 400;
   }
 
-  .project {
-    color: #818cf8;
-    font-weight: 400;
+  .project-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    margin: 0 4px;
+    border-radius: 3px;
+    background: #818cf822;
+    color: #a5b4fc;
+    letter-spacing: 0.02em;
+    vertical-align: middle;
   }
 
   .separator {

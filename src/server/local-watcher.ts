@@ -113,6 +113,23 @@ export class LocalWatcher extends EventEmitter {
     this.tailedFiles.set(filePath, { lastData: Date.now(), offset });
     this.emit("status", this.vmId, filePath, "new");
 
+    // Emit the first line (init message) for project/metadata extraction
+    try {
+      const buf = Buffer.alloc(Math.min(offset, 4096));
+      const fd = openSync(filePath, "r");
+      try {
+        readSync(fd, buf, 0, buf.length, 0);
+      } finally {
+        closeSync(fd);
+      }
+      const firstLine = buf.toString("utf-8").split("\n")[0]?.trim();
+      if (firstLine) {
+        this.emit("line", this.vmId, filePath, firstLine);
+      }
+    } catch {
+      // ignore — file may be empty or gone
+    }
+
     // Poll file for new content
     const poll = setInterval(() => {
       if (this.stopped) {

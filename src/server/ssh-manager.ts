@@ -186,6 +186,7 @@ start_tail() {
   case "$tailed" in *"|$f|"*) return ;; esac
   tailed="$tailed|$f|"
   echo "FILE:$f"
+  head -1 "$f" 2>/dev/null | while IFS= read -r line; do echo "$f\t$line"; done
   tail -n 50 -f "$f" 2>/dev/null | while IFS= read -r line; do echo "$f\t$line"; done &
 }
 while true; do
