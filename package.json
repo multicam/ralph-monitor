@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "bun run dev:server & bun run dev:frontend",
-    "dev:local": "bun --watch src/server/index.ts --local",
+    "dev:local": "bun --watch src/server/index.ts --local & bun run dev:frontend",
     "dev:server": "bun --watch src/server/index.ts",
     "dev:frontend": "bun scripts/dev-frontend.ts",
     "build": "cd src/frontend && bunx vite build",
