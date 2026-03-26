@@ -1,14 +1,13 @@
 {
   "mcpServers": {
     "brave-devtools": {
-      "command": "chrome-devtools-mcp",
+      "command": "./scripts/brave-devtools-mcp.sh",
       "args": [
-        "--executablePath", "/snap/bin/brave",
         "--isolated",
         "--viewport", "1920x1080",
         "--acceptInsecureCerts",
         "--no-usage-statistics",
-        "--logFile", "/tmp/chrome-devtools-mcp.log"
+        "--logFile", "/tmp/chrome-devtools-mcp--ralph-monitor.log"
       ],
       "env": {
         "DEBUG": "",

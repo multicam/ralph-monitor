@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { readdirSync, statSync, openSync, readSync, closeSync, unlinkSync } from "fs";
-import { join } from "path";
+import { join, basename } from "path";
 
 const STALE_THRESHOLD_MS = 5 * 60_000;
 const WATCH_DIR = "/tmp/ralph";
@@ -16,13 +16,16 @@ export class LocalWatcher extends EventEmitter {
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private watchDir: string;
+  private maxAgeMs: number | null;
 
   constructor(
     private vmId: string,
     watchDir?: string,
+    maxAgeMs?: number,
   ) {
     super();
     this.watchDir = watchDir ?? WATCH_DIR;
+    this.maxAgeMs = maxAgeMs ?? null;
   }
 
   deleteFile(filePath: string): Promise<void> {
@@ -82,13 +85,24 @@ export class LocalWatcher extends EventEmitter {
 
   private findJsonlFiles(dir: string): string[] {
     const results: string[] = [];
+    const now = Date.now();
     try {
       const entries = readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
+        // Skip subagent directories — only monitor top-level sessions
+        if (entry.isDirectory() && entry.name === "subagents") continue;
+
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
           results.push(...this.findJsonlFiles(fullPath));
         } else if (entry.name.endsWith(".jsonl")) {
+          // When maxAgeMs is set, only discover recently-modified files
+          if (this.maxAgeMs) {
+            try {
+              const mtime = statSync(fullPath).mtimeMs;
+              if (now - mtime > this.maxAgeMs) continue;
+            } catch { continue; }
+          }
           results.push(fullPath);
         }
       }

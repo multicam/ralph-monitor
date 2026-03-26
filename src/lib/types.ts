@@ -81,6 +81,8 @@ export interface VmConfig {
   password?: string;
   local?: boolean;
   watchDir?: string;
+  /** Only discover files modified within this window (ms). Useful for ~/.claude/projects/ */
+  maxAgeMs?: number;
 }
 
 /** Derives a loopId from vm name and session file basename */

@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { statSync } from "fs";
 import { SshManager } from "./ssh-manager.ts";
 import { LocalWatcher } from "./local-watcher.ts";
 import { parseLine, EventPairer } from "../lib/parser.ts";
@@ -13,6 +14,41 @@ import type {
 import { makeLoopId, sanitizeVmConfig } from "../lib/types.ts";
 
 const BUFFER_SIZE = 500;
+
+/**
+ * Decode a Claude Code projects directory name back to a project name.
+ * e.g. "-home-jean-marc-Code-course-video-manager" → "course-video-manager"
+ *
+ * Works by greedily resolving real filesystem directories at each dash position.
+ * Whatever remains after the last resolved directory is the project name.
+ */
+function projectFromClaudeDir(encoded: string): string | null {
+  const raw = encoded.slice(1); // strip leading "-"
+  let checkedUpTo = 0;
+  let realPath = "/";
+  let searchFrom = 0;
+
+  while (true) {
+    const dash = raw.indexOf("-", searchFrom);
+    if (dash === -1) break;
+
+    const segment = raw.slice(checkedUpTo, dash);
+    const testPath = realPath + segment;
+
+    try {
+      if (statSync(testPath).isDirectory()) {
+        realPath = testPath + "/";
+        checkedUpTo = dash + 1;
+      }
+    } catch {
+      // not a real directory — this dash is part of a name
+    }
+
+    searchFrom = dash + 1;
+  }
+
+  return raw.slice(checkedUpTo) || null;
+}
 
 /** Extract timestamp from session filename like build-20260218-072927-iter2.jsonl */
 function parseSessionTimestamp(sessionFile: string): number {
@@ -44,7 +80,7 @@ export class Pipeline extends EventEmitter {
   start(): void {
     for (const vm of this.config.vms) {
       const manager = vm.local
-        ? new LocalWatcher(vm.name, vm.watchDir)
+        ? new LocalWatcher(vm.name, vm.watchDir, vm.maxAgeMs)
         : new SshManager(vm);
       this.managers.push(manager);
       this.managersByVm.set(vm.name, manager);
@@ -252,6 +288,15 @@ export class Pipeline extends EventEmitter {
       const raw = parsed as Record<string, unknown>;
       if (raw.type === "system" && raw.subtype === "init" && typeof raw.cwd === "string") {
         state.project = (raw.cwd as string).split("/").pop() ?? null;
+        this.emit("loop_status", loopId, state);
+      }
+    }
+
+    // Fallback: extract project from .claude/projects/<encoded-path>/ directory structure
+    if (!state.project && state.sessionFile.includes(".claude/projects/")) {
+      const m = state.sessionFile.match(/\.claude\/projects\/([^/]+)\//);
+      if (m) {
+        state.project = projectFromClaudeDir(m[1]!);
         this.emit("loop_status", loopId, state);
       }
     }
