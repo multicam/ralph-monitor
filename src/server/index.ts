@@ -1,11 +1,26 @@
 import { createServer } from "http";
 import { readFileSync, existsSync } from "fs";
 import { hostname, homedir } from "os";
-import { resolve, join } from "path";
+import { resolve, join, extname } from "path";
 import { parse as parseYaml } from "yaml";
 import { Pipeline } from "./pipeline.ts";
 import { WsRelay } from "./ws-server.ts";
 import type { AppConfig } from "../lib/types.ts";
+
+const STATIC_DIR = resolve(import.meta.dirname!, "../frontend/build");
+const hasStaticBuild = existsSync(join(STATIC_DIR, "index.html"));
+
+const MIME: Record<string, string> = {
+  ".html": "text/html",
+  ".js": "application/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
 
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const DEFAULT_MAX_AGE_MS = 15 * 60_000; // 15 minutes — only discover active sessions
@@ -98,6 +113,25 @@ const server = createServer(async (req, res) => {
       "Access-Control-Allow-Headers": "Content-Type",
     });
     res.end();
+    return;
+  }
+
+  // Serve static frontend build
+  if (hasStaticBuild) {
+    const urlPath = req.url?.split("?")[0] ?? "/";
+    const filePath = join(STATIC_DIR, urlPath === "/" ? "index.html" : urlPath);
+
+    if (existsSync(filePath) && !filePath.includes("..")) {
+      const ext = extname(filePath);
+      const contentType = MIME[ext] ?? "application/octet-stream";
+      res.writeHead(200, { "Content-Type": contentType });
+      res.end(readFileSync(filePath));
+      return;
+    }
+
+    // SPA fallback — serve index.html for unmatched routes
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(readFileSync(join(STATIC_DIR, "index.html")));
     return;
   }
 
