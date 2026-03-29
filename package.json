@@ -5,12 +5,10 @@
   "private": true,
   "scripts": {
     "dev": "bun run dev:server & bun run dev:frontend",
-    "dev:local": "bun --watch src/server/index.ts --local & bun run dev:frontend",
     "dev:server": "bun --watch src/server/index.ts",
     "dev:frontend": "bun scripts/dev-frontend.ts",
     "build": "cd src/frontend && bunx vite build",
     "start": "bun src/server/index.ts",
-    "start:local": "bun run build && bun src/server/index.ts --local",
     "test": "bun test",
     "test:coverage": "bun test --coverage",
     "update": "bun update --latest --interactive"

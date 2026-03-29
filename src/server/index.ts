@@ -5,7 +5,7 @@ import { resolve, join, extname } from "path";
 import { parse as parseYaml } from "yaml";
 import { Pipeline } from "./pipeline.ts";
 import { WsRelay } from "./ws-server.ts";
-import type { AppConfig } from "../lib/types.ts";
+import type { AppConfig, VmConfig } from "../lib/types.ts";
 
 const STATIC_DIR = resolve(import.meta.dirname!, "../frontend/build");
 const hasStaticBuild = existsSync(join(STATIC_DIR, "index.html"));
@@ -25,12 +25,11 @@ const MIME: Record<string, string> = {
 const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const DEFAULT_MAX_AGE_MS = 15 * 60_000; // 15 minutes — only discover active sessions
 
-function parseArgs(): { local: boolean; watchDir?: string; port?: number } {
+function parseArgs(): { watchDir?: string; port?: number } {
   const args = process.argv.slice(2);
-  const result: { local: boolean; watchDir?: string; port?: number } = { local: false };
+  const result: { watchDir?: string; port?: number } = {};
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--local") result.local = true;
-    else if (args[i] === "--watch-dir" && args[i + 1]) result.watchDir = args[++i];
+    if (args[i] === "--watch-dir" && args[i + 1]) result.watchDir = args[++i];
     else if (args[i] === "--port" && args[i + 1]) result.port = Number(args[++i]);
   }
   return result;
@@ -38,40 +37,42 @@ function parseArgs(): { local: boolean; watchDir?: string; port?: number } {
 
 const flags = parseArgs();
 
-let config: AppConfig;
+// Always monitor local Claude Code sessions
+const localWatchDir = flags.watchDir ?? CLAUDE_PROJECTS_DIR;
+const useMaxAge = !flags.watchDir; // only filter by recency when using default Claude dir
+const localVm: VmConfig = {
+  name: hostname(),
+  host: "localhost",
+  user: "local",
+  local: true,
+  watchDir: localWatchDir,
+  ...(useMaxAge && { maxAgeMs: DEFAULT_MAX_AGE_MS }),
+};
 
-if (flags.local) {
-  const watchDir = flags.watchDir ?? CLAUDE_PROJECTS_DIR;
-  const useMaxAge = !flags.watchDir; // only filter by recency when using default Claude dir
-  config = {
-    server: { port: flags.port ?? 4020 },
-    vms: [{
-      name: hostname(),
-      host: "localhost",
-      user: "local",
-      local: true,
-      watchDir,
-      ...(useMaxAge && { maxAgeMs: DEFAULT_MAX_AGE_MS }),
-    }],
-  };
-} else {
-  const configPath = resolve(process.cwd(), "ralph-monitor.yaml");
-  if (!existsSync(configPath)) {
-    console.error("ralph-monitor.yaml not found. Use --local to monitor this machine without a config file.");
-    process.exit(1);
-  }
-  const configRaw = readFileSync(configPath, "utf-8");
-  config = parseYaml(configRaw) as AppConfig;
-  if (flags.port) config.server.port = flags.port;
-
-  // Validate VM auth config
-  for (const vm of config.vms) {
+// Optionally load yaml for remote VMs
+const configPath = resolve(process.cwd(), "ralph-monitor.yaml");
+let yamlConfig: AppConfig | undefined;
+if (existsSync(configPath)) {
+  yamlConfig = parseYaml(readFileSync(configPath, "utf-8")) as AppConfig;
+  for (const vm of yamlConfig.vms) {
     if (!vm.local && !vm.key && !vm.password) {
       console.error(`VM "${vm.name}": must have either "key", "password", or "local: true" configured`);
       process.exit(1);
     }
   }
 }
+
+// Merge: auto-inject local VM unless yaml already has a local entry
+const yamlHasLocal = yamlConfig?.vms.some(v => v.local);
+const vms: VmConfig[] = yamlHasLocal
+  ? yamlConfig!.vms
+  : [localVm, ...(yamlConfig?.vms ?? [])];
+
+const config: AppConfig = {
+  server: { port: flags.port ?? yamlConfig?.server?.port ?? 4020 },
+  frontend: yamlConfig?.frontend,
+  vms,
+};
 
 const port = config.server?.port ?? 3000;
 
@@ -146,11 +147,12 @@ pipeline.start();
 
 server.listen(port, () => {
   console.log(`ralph-monitor listening on http://localhost:${port}`);
-  if (flags.local) {
-    const vm = config.vms[0]!;
-    console.log(`Local mode: watching ${vm.watchDir}`);
-    if (vm.maxAgeMs) console.log(`  Discovering sessions active within last ${vm.maxAgeMs / 60_000}min`);
-  } else {
-    console.log(`Monitoring ${config.vms.length} VM(s): ${config.vms.map((v) => v.name).join(", ")}`);
+  const local = config.vms.find(v => v.local);
+  if (local) {
+    console.log(`Local: watching ${local.watchDir}${local.maxAgeMs ? ` (sessions active within last ${local.maxAgeMs / 60_000}min)` : ""}`);
+  }
+  const remoteVms = config.vms.filter(v => !v.local);
+  if (remoteVms.length) {
+    console.log(`Remote: ${remoteVms.map(v => v.name).join(", ")}`);
   }
 });

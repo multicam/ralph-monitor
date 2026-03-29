@@ -2,21 +2,15 @@
 ## CLI
 
 ```sh
-# Remote mode (default) — reads ralph-monitor.yaml
 bun run dev              # server + frontend with hot reload
 bun run dev:server       # server only
 
-# Local mode — discovers running Claude Code sessions on this machine
-bun run dev:local        # watches ~/.claude/projects/, no config needed
-bun src/server/index.ts --local
-
-# Options (work in both modes)
---local                  # skip yaml config, discover local Claude Code sessions
---watch-dir <path>       # override watch directory (default: ~/.claude/projects/)
+# Options
+--watch-dir <path>       # override local watch directory (default: ~/.claude/projects/)
 --port <number>          # override server port (default: 4020)
 ```
 
-Local mode scans `~/.claude/projects/` for JSONL session files modified within the last 15 minutes, skips subagent files, and extracts the project name from the directory path. When `--watch-dir` is provided, the recency filter is disabled (watches all files).
+Always monitors local Claude Code sessions from `~/.claude/projects/` (JSONL files modified within the last 15 minutes, skips subagents). If `ralph-monitor.yaml` exists, also monitors remote VMs defined there. When `--watch-dir` is provided, the recency filter is disabled (watches all files).
 
 ## Bun
 
