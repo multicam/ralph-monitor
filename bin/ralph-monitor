@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Resolve through symlinks to find the real project root
+DIR="$(cd "$(dirname "$(readlink -f "$0")")" && cd .. && pwd)"
+exec bun "$DIR/src/server/index.ts" "$@"
