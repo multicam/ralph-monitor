@@ -1,0 +1,52 @@
+# .security-gate.toml — ralph-monitor repo allowlist
+# Typo-FP entries: scanner false positives reviewed 2026-05-25
+# NOTE: BLOCKs with (high)/(critical) OSV are NOT allowlisted here.
+
+[[allowlist]]
+package = "acorn"
+ecosystem = "npm"
+reason = "typo-FP: acorn is a well-known JS parser, not a typosquat of cors"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "mrmime"
+ecosystem = "npm"
+reason = "typo-FP: mrmime is a MIME-type lookup package (sirv dep), not a typosquat of mime"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "nan"
+ecosystem = "npm"
+reason = "typo-FP: nan is a native addon abstraction layer for Node.js, not a typosquat of tap"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "obug"
+ecosystem = "npm"
+reason = "typo-FP: obug is a legitimate debug-object utility, not a typosquat of debug"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "sirv"
+ecosystem = "npm"
+reason = "typo-FP: sirv is a static file server (sveltekit dep), not a typosquat of swr"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "vitefu"
+ecosystem = "npm"
+reason = "typo-FP: vitefu is a sveltekit vite utilities package, not a typosquat of vite"
+reviewed = "2026-05-25"
+review_expires = "2026-08-26"
+
+[[allowlist]]
+package = "2"
+ecosystem = "npm"
+reason = "typo-FP: '2' is lamansky/2 type-conversion library (github.com/lamansky/2), not a typosquat of ws"
+reviewed = "2026-05-26"
+review_expires = "2026-08-26"
